@@ -8,7 +8,7 @@ calls in Safe mode and asks you in a desktop app before letting them through.
 .NET 10, Native AOT, no reflection, no runtime to install. A desktop app (Avalonia) does configuration,
 takeover of existing client configs, live call view and approvals.
 
-![Hubris desktop app, dashboard of a running hub](docs/hubris-dashboard.png)
+![Hubris desktop app: a destructive call waiting for approval, DLP redactions and context cost on the dashboard](docs/hubris-dashboard.png)
 
 ## Numbers
 
