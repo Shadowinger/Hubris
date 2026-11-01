@@ -35,6 +35,8 @@ public sealed class ConfigViewModel : ObservableObject
         BrowseServerCommand = new AsyncCommand(BrowseServerAsync);
         CopyCommandCommand = new AsyncCommand(() => CopyToClipboard?.Invoke(CommandPreview) ?? Task.CompletedTask);
         ClearLogCommand = new RelayCommand(() => { _log.Clear(); LogText = ""; });
+        SetSafeCommand = new RelayCommand(() => IsBypass = false);
+        SetBypassCommand = new RelayCommand(() => IsBypass = true);
 
         Bridges.CollectionChanged += (_, _) => Raise(nameof(CommandPreview));
     }
@@ -47,7 +49,8 @@ public sealed class ConfigViewModel : ObservableObject
     // ---------------------------------------------------------------- fields
     public string ServerPath { get => _serverPath; set { if (Set(ref _serverPath, value)) { Raise(nameof(ServerPathValid)); Raise(nameof(CommandPreview)); RaiseCommands(); } } }
     public bool ServerPathValid => File.Exists(_serverPath);
-    public bool IsBypass { get => _isBypass; set { if (Set(ref _isBypass, value)) Raise(nameof(CommandPreview)); } }
+    public bool IsBypass { get => _isBypass; set { if (Set(ref _isBypass, value)) { Raise(nameof(IsSafe)); Raise(nameof(CommandPreview)); } } }
+    public bool IsSafe => !_isBypass;
     public bool Compact { get => _compact; set { if (Set(ref _compact, value)) Raise(nameof(CommandPreview)); } }
     public bool Verbose { get => _verbose; set { if (Set(ref _verbose, value)) Raise(nameof(CommandPreview)); } }
     public bool NoControl { get => _noControl; set { if (Set(ref _noControl, value)) Raise(nameof(CommandPreview)); } }
@@ -79,6 +82,8 @@ public sealed class ConfigViewModel : ObservableObject
     public AsyncCommand BrowseServerCommand { get; }
     public AsyncCommand CopyCommandCommand { get; }
     public RelayCommand ClearLogCommand { get; }
+    public RelayCommand SetSafeCommand { get; }
+    public RelayCommand SetBypassCommand { get; }
 
     private BridgeRow NewBridge()
     {

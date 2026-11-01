@@ -1,8 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Text.Encodings.Web;
 using System.Text.Json;
-using Avalonia.Media;
-using Avalonia.Media.Immutable;
 using Avalonia.Threading;
 using Hubris.Control;
 using Hubris.Desktop.Services;
@@ -40,6 +38,8 @@ public sealed class HubViewModel : ObservableObject
         _mode = client.Descriptor.Mode;
         _isBypass = _mode == "Bypass";
 
+        SetSafeCommand = new AsyncCommand(() => _client.SetModeAsync("safe"));
+        SetBypassCommand = new AsyncCommand(() => _client.SetModeAsync("bypass"));
         ClearCacheCommand = new AsyncCommand(() => _client.ClearCacheAsync());
         ClearEventsCommand = new RelayCommand(() => Events.Clear());
         ShutdownCommand = new AsyncCommand(() => _client.ShutdownHubAsync());
@@ -60,9 +60,8 @@ public sealed class HubViewModel : ObservableObject
     public bool IsConnected { get => _isConnected; private set => Set(ref _isConnected, value); }
 
     // ---------------------------------------------------------------- mode
-    public string Mode { get => _mode; private set { if (Set(ref _mode, value)) { Raise(nameof(IsSafe)); Raise(nameof(ModeBrush)); } } }
+    public string Mode { get => _mode; private set { if (Set(ref _mode, value)) Raise(nameof(IsSafe)); } }
     public bool IsSafe => _mode == "Safe";
-    public IBrush ModeBrush => IsSafe ? Palette.Ok : Palette.Warn;
 
     /// <summary>Two-way bound to the toggle; the setter sends the command, the event confirms it.</summary>
     public bool IsBypass
@@ -95,7 +94,9 @@ public sealed class HubViewModel : ObservableObject
     public string ContextMeter => $"Active in context: {_activeTools} / {ToolCount} tools  (~{_activeTokens} tokens | {SavedPercent}% saved)";
     public string ContextTile => $"~{_activeTokens} tok";
     public string ContextTileSub => $"{_activeTools}/{ToolCount} tools · {SavedPercent}% saved";
-    public IBrush SavedBrush => SavedPercent >= 50 ? Palette.Ok : SavedPercent > 0 ? Palette.Warn : Palette.Muted;
+    public string SavedText => $"{SavedPercent}% saved";
+    public bool SavedGood => SavedPercent >= 50;
+    public bool SavedSome => SavedPercent is > 0 and < 50;
 
     private void ApplyContext(int? active, int? activeTok, int? totalTok)
     {
@@ -104,7 +105,7 @@ public sealed class HubViewModel : ObservableObject
         _activeTokens = activeTok ?? _activeTokens;
         _totalTokens = totalTok ?? _totalTokens;
         Raise(nameof(ActiveTools)); Raise(nameof(ActiveTokens)); Raise(nameof(TotalTokens)); Raise(nameof(SavedPercent));
-        Raise(nameof(ContextMeter)); Raise(nameof(ContextTile)); Raise(nameof(ContextTileSub)); Raise(nameof(SavedBrush));
+        Raise(nameof(ContextMeter)); Raise(nameof(ContextTile)); Raise(nameof(ContextTileSub)); Raise(nameof(SavedText)); Raise(nameof(SavedGood)); Raise(nameof(SavedSome));
     }
 
     // ---------------------------------------------------------------- collections
@@ -118,6 +119,8 @@ public sealed class HubViewModel : ObservableObject
     public string ToolFilter { get => _toolFilter; set { if (Set(ref _toolFilter, value)) ApplyToolFilter(); } }
 
     // ---------------------------------------------------------------- commands
+    public AsyncCommand SetSafeCommand { get; }
+    public AsyncCommand SetBypassCommand { get; }
     public AsyncCommand ClearCacheCommand { get; }
     public RelayCommand ClearEventsCommand { get; }
     public AsyncCommand ShutdownCommand { get; }
@@ -232,16 +235,6 @@ public sealed class HubViewModel : ObservableObject
     }
 }
 
-public static class Palette
-{
-    public static readonly IBrush Ok = new ImmutableSolidColorBrush(Color.Parse("#3FB950"));
-    public static readonly IBrush Warn = new ImmutableSolidColorBrush(Color.Parse("#D29922"));
-    public static readonly IBrush Error = new ImmutableSolidColorBrush(Color.Parse("#F85149"));
-    public static readonly IBrush Info = new ImmutableSolidColorBrush(Color.Parse("#58A6FF"));
-    public static readonly IBrush Muted = new ImmutableSolidColorBrush(Color.Parse("#8B949E"));
-    public static readonly IBrush Purple = new ImmutableSolidColorBrush(Color.Parse("#BC8CFF"));
-}
-
 public sealed class ApprovalViewModel : ObservableObject
 {
     // Display only: keep '&', '<', non-ASCII readable instead of \uXXXX escapes.
@@ -269,6 +262,9 @@ public sealed class ApprovalViewModel : ObservableObject
     public string Id { get; }
     public string Tool { get; }
     public string Risk { get; }
+    public bool IsReadOnly => Risk == "ReadOnly";
+    public bool IsMutating => Risk == "Mutating";
+    public bool IsDestructive => Risk == "Destructive";
     public string Reason { get; }
     public string ArgsJson { get; }
     public string RequestedAt { get; }
@@ -297,7 +293,12 @@ public sealed class EventRow
     public string Duration { get; init; } = "";
     public string Args { get; init; } = "";
     public string Preview { get; init; } = "";
-    public IBrush OutcomeBrush { get; init; } = Palette.Muted;
+    /// <summary>Pill tone, consumed by the view as style classes (ok / warn / danger / indigo; none = neutral).</summary>
+    public string Tone { get; init; } = "";
+    public bool ToneOk => Tone == "ok";
+    public bool ToneWarn => Tone == "warn";
+    public bool ToneDanger => Tone == "danger";
+    public bool ToneIndigo => Tone == "indigo";
     public string Detail => string.IsNullOrEmpty(Args) ? Preview : $"args: {Args}\n\n{Preview}";
 
     public static EventRow FromToolCall(ControlMessage m)
@@ -312,13 +313,13 @@ public sealed class EventRow
             Duration = Fmt.Ms(m.DurationMs),
             Args = m.Args?.ToJsonString(CompactJson) ?? "",
             Preview = m.Preview ?? "",
-            OutcomeBrush = outcome switch
+            Tone = outcome switch
             {
-                "ok" or "cached" => Palette.Ok,
-                "approved" => Palette.Info,
-                "blocked" or "denied" or "timeout" => Palette.Error,
-                "error" or "cancelled" => Palette.Warn,
-                _ => Palette.Muted,
+                "ok" or "cached" => "ok",
+                "approved" => "indigo",
+                "blocked" or "denied" or "timeout" => "danger",
+                "error" or "cancelled" => "warn",
+                _ => "",
             },
         };
     }
@@ -331,7 +332,7 @@ public sealed class EventRow
         Risk = m.Risk ?? "",
         Args = m.Args?.ToJsonString(CompactJson) ?? "",
         Preview = m.Reason ?? "",
-        OutcomeBrush = Palette.Purple,
+        Tone = "indigo",
     };
 
     public static EventRow FromLog(ControlMessage m) => new()
@@ -340,7 +341,6 @@ public sealed class EventRow
         Tool = "log",
         Outcome = m.Level ?? "info",
         Preview = m.Text ?? "",
-        OutcomeBrush = Palette.Muted,
     };
 
     public static EventRow Error(string text) => new()
@@ -349,7 +349,7 @@ public sealed class EventRow
         Tool = "desktop",
         Outcome = "error",
         Preview = text,
-        OutcomeBrush = Palette.Error,
+        Tone = "danger",
     };
 }
 
@@ -385,7 +385,10 @@ public sealed class ToolRow : ObservableObject
     public bool CanUnlock { get; }
     public bool CanLock { get; }
     public string VisibilityText => Pinned ? "pinned" : Unlocked ? "unlocked" : Visible ? "listed" : "on-demand";
-    public IBrush RiskBrush => Risk switch { "ReadOnly" => Palette.Ok, "Mutating" => Palette.Warn, _ => Palette.Error };
+    public bool IsReadOnly => Risk == "ReadOnly";
+    public bool IsMutating => Risk == "Mutating";
+    public bool IsDestructive => Risk == "Destructive";
+    public bool StateIndigo => !Pinned && Unlocked;
     public AsyncCommand RevealCommand { get; }
     public AsyncCommand LockCommand { get; }
 }
