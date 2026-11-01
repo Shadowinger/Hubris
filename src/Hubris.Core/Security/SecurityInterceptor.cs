@@ -102,13 +102,19 @@ public sealed class SecurityInterceptor
     public const string BlockedPrefix = "[SAFE MODE BLOCKED] Action requires explicit user confirmation or switching Hubris to Bypass mode.";
 
     private long _blocked;
+    private int _mode;
 
     public SecurityInterceptor(ExecutionMode mode)
     {
-        Mode = mode;
+        _mode = (int)mode;
     }
 
-    public ExecutionMode Mode { get; }
+    /// <summary>Switchable at runtime from the control channel; reads are lock-free.</summary>
+    public ExecutionMode Mode
+    {
+        get => (ExecutionMode)Volatile.Read(ref _mode);
+        set => Volatile.Write(ref _mode, (int)value);
+    }
     public long BlockedCount => Interlocked.Read(ref _blocked);
 
     public SecurityVerdict Evaluate(string toolName, ToolRiskLevel risk, JsonObject? arguments)

@@ -9,10 +9,9 @@ public static class AutoInstaller
 {
     public const string ServerKey = "hubris";
 
-    public static int InstallVsCode(string workspaceDir, IReadOnlyList<string> serverArgs)
+    public static int InstallVsCode(string workspaceDir, string? exe, IReadOnlyList<string> serverArgs)
     {
-        string? exe = Environment.ProcessPath;
-        if (string.IsNullOrEmpty(exe)) { Log.Error("cannot determine own executable path"); return 1; }
+        if (string.IsNullOrEmpty(exe)) { Log.Error("server executable path is unknown"); return 1; }
 
         string path = Path.Combine(workspaceDir, ".vscode", "mcp.json");
         var entry = new JsonObject
@@ -24,10 +23,9 @@ public static class AutoInstaller
         return MergeServerEntry(path, "servers", entry) ? 0 : 1;
     }
 
-    public static int InstallClaude(IReadOnlyList<string> serverArgs)
+    public static int InstallClaude(string? exe, IReadOnlyList<string> serverArgs)
     {
-        string? exe = Environment.ProcessPath;
-        if (string.IsNullOrEmpty(exe)) { Log.Error("cannot determine own executable path"); return 1; }
+        if (string.IsNullOrEmpty(exe)) { Log.Error("server executable path is unknown"); return 1; }
 
         string? path = ClaudeConfigPath();
         if (path is null) { Log.Error("unsupported OS for Claude Desktop auto-config"); return 1; }

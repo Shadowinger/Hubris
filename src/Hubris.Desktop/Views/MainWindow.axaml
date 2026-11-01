@@ -1,0 +1,288 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:Hubris.Desktop.ViewModels"
+        x:Class="Hubris.Desktop.Views.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Title="Hubris"
+        Width="1180" Height="760" MinWidth="900" MinHeight="560"
+        WindowStartupLocation="CenterScreen">
+
+    <Grid ColumnDefinitions="240,*">
+
+        <!-- ============================================================ sidebar -->
+        <Border Grid.Column="0" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}" Padding="12">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Top" Spacing="4" Margin="4,4,4,12">
+                    <TextBlock Classes="h1" Text="Hubris" />
+                    <TextBlock Classes="muted" FontSize="11" Text="MCP gateway control" />
+                </StackPanel>
+
+                <Button DockPanel.Dock="Top" HorizontalAlignment="Stretch" Command="{Binding ShowConfigCommand}" Margin="0,0,0,10">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Text="⚙" />
+                        <TextBlock Text="Configurator &amp; launcher" />
+                    </StackPanel>
+                </Button>
+
+                <DockPanel DockPanel.Dock="Top" Margin="4,6,4,4">
+                    <Button DockPanel.Dock="Right" Command="{Binding RescanCommand}" Padding="6,2" ToolTip.Tip="Rescan runtime directory" Content="↻" />
+                    <TextBlock Classes="muted" FontSize="11" VerticalAlignment="Center" Text="RUNNING HUBS" />
+                </DockPanel>
+
+                <StackPanel DockPanel.Dock="Bottom" Margin="4,8,4,0" Spacing="2">
+                    <TextBlock Classes="muted" FontSize="10" Text="runtime dir" />
+                    <TextBlock Classes="mono" FontSize="10" TextWrapping="Wrap" Text="{Binding RuntimeDir}" Opacity="0.7" />
+                </StackPanel>
+
+                <Border IsVisible="{Binding NoHubs}" Padding="8" Opacity="0.7">
+                    <TextBlock TextWrapping="Wrap" FontSize="12"
+                               Text="No hub is running. Start one from a client (Claude Desktop, Claude Code, VS Code) or launch a test instance from the configurator." />
+                </Border>
+
+                <ListBox ItemsSource="{Binding Hubs}" SelectedItem="{Binding SelectedHub}" IsVisible="{Binding HasHubs}" Background="Transparent">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:HubViewModel">
+                            <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+                                <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding Subtitle}" FontSize="11" Opacity="0.65" TextTrimming="CharacterEllipsis" />
+                                <StackPanel Grid.Row="0" Grid.RowSpan="2" Grid.Column="1" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                                    <Border Classes="badge" Background="#BC8CFF" IsVisible="{Binding HasApprovals}">
+                                        <TextBlock Text="{Binding PendingCount}" />
+                                    </Border>
+                                    <Border Classes="badge" Background="{Binding ModeBrush}">
+                                        <TextBlock Text="{Binding Mode}" />
+                                    </Border>
+                                </StackPanel>
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </DockPanel>
+        </Border>
+
+        <!-- ============================================================ hub dashboard -->
+        <Panel Grid.Column="1" IsVisible="{Binding ShowHub}">
+        <Grid DataContext="{Binding SelectedHub}" x:DataType="vm:HubViewModel" RowDefinitions="Auto,Auto,*" Margin="20,16">
+
+            <!-- header -->
+            <DockPanel Grid.Row="0" Margin="0,0,0,12">
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                    <TextBlock VerticalAlignment="Center" Text="Safe" />
+                    <ToggleSwitch IsChecked="{Binding IsBypass}" OnContent="" OffContent="" ToolTip.Tip="Switch between Safe and Bypass mode at runtime" />
+                    <TextBlock VerticalAlignment="Center" Text="Bypass" />
+                    <Button Command="{Binding RefreshCommand}" Content="Refresh" />
+                    <Button Command="{Binding ClearCacheCommand}" Content="Clear cache" />
+                    <Button Command="{Binding ShutdownCommand}" Content="Stop hub" />
+                </StackPanel>
+                <StackPanel Spacing="2">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <TextBlock Classes="h1" Text="{Binding Title}" />
+                        <Border Classes="badge" Background="{Binding ModeBrush}"><TextBlock Text="{Binding Mode}" /></Border>
+                        <Border Classes="badge" Background="#58A6FF" IsVisible="{Binding IsCompact}"><TextBlock Text="compact" /></Border>
+                    </StackPanel>
+                    <TextBlock Classes="muted mono" Text="{Binding Cwd}" />
+                </StackPanel>
+            </DockPanel>
+
+            <!-- pending approvals -->
+            <ItemsControl Grid.Row="1" ItemsSource="{Binding Approvals}" IsVisible="{Binding HasApprovals}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:ApprovalViewModel">
+                        <Border Classes="approval">
+                            <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto">
+                                <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Spacing="10">
+                                    <TextBlock Text="Approval required" FontWeight="SemiBold" Foreground="#BC8CFF" />
+                                    <TextBlock Classes="mono" Text="{Binding Tool}" FontWeight="SemiBold" />
+                                    <TextBlock Classes="muted" Text="{Binding Risk}" />
+                                    <TextBlock Classes="muted" Text="{Binding RequestedAt}" />
+                                    <TextBlock Classes="muted" Text="{Binding Remaining}" />
+                                </StackPanel>
+                                <TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding Reason}" TextWrapping="Wrap" Margin="0,6,0,6" FontSize="12" />
+                                <ScrollViewer Grid.Row="2" Grid.Column="0" MaxHeight="140" HorizontalScrollBarVisibility="Auto">
+                                    <TextBlock Classes="mono" Text="{Binding ArgsJson}" Opacity="0.85" />
+                                </ScrollViewer>
+                                <StackPanel Grid.Row="0" Grid.RowSpan="3" Grid.Column="1" Orientation="Vertical" Spacing="8" VerticalAlignment="Center" Margin="16,0,0,0">
+                                    <Button Classes="approve" Command="{Binding ApproveCommand}" Content="Approve" MinWidth="110" HorizontalContentAlignment="Center" />
+                                    <Button Classes="deny" Command="{Binding DenyCommand}" Content="Deny" MinWidth="110" HorizontalContentAlignment="Center" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <!-- tabs -->
+            <TabControl Grid.Row="2">
+                <TabItem Header="Dashboard">
+                    <Grid RowDefinitions="Auto,Auto,*" Margin="0,8,0,0">
+                        <WrapPanel Grid.Row="0" ItemSpacing="10" LineSpacing="10">
+                            <Border Classes="tile"><StackPanel><TextBlock Classes="label" Text="UPTIME" /><TextBlock Classes="value" Text="{Binding Uptime}" /></StackPanel></Border>
+                            <Border Classes="tile"><StackPanel><TextBlock Classes="label" Text="RSS" /><TextBlock Classes="value" Text="{Binding Rss}" /></StackPanel></Border>
+                            <Border Classes="tile"><StackPanel><TextBlock Classes="label" Text="HEAP" /><TextBlock Classes="value" Text="{Binding Heap}" /></StackPanel></Border>
+                            <Border Classes="tile"><StackPanel><TextBlock Classes="label" Text="CACHE" /><TextBlock Classes="value" Text="{Binding Cache}" FontSize="15" /><TextBlock Classes="label" Text="{Binding CacheFill}" Margin="0,2,0,0" /></StackPanel></Border>
+                            <Border Classes="tile"><StackPanel><TextBlock Classes="label" Text="BLOCKED" /><TextBlock Classes="value" Text="{Binding Blocked}" Foreground="#F85149" /></StackPanel></Border>
+                            <Border Classes="tile"><StackPanel><TextBlock Classes="label" Text="DLP REDACTIONS" /><TextBlock Classes="value" Text="{Binding Dlp}" /></StackPanel></Border>
+                            <Border Classes="tile"><StackPanel><TextBlock Classes="label" Text="TOOLS" /><TextBlock Classes="value" Text="{Binding ToolCount}" /></StackPanel></Border>
+                            <Border Classes="tile"><StackPanel><TextBlock Classes="label" Text="BRIDGES" /><TextBlock Classes="value" Text="{Binding BridgeCount}" /></StackPanel></Border>
+                            <Border Classes="tile"><StackPanel><TextBlock Classes="label" Text="UI CLIENTS" /><TextBlock Classes="value" Text="{Binding Clients}" /></StackPanel></Border>
+                        </WrapPanel>
+
+                        <DockPanel Grid.Row="1" Margin="0,16,0,6">
+                            <Button DockPanel.Dock="Right" Command="{Binding ClearEventsCommand}" Content="Clear" Padding="8,2" />
+                            <TextBlock Classes="h2" Margin="0" Text="Live calls" VerticalAlignment="Center" />
+                        </DockPanel>
+
+                        <Grid Grid.Row="2" ColumnDefinitions="*,8,320">
+                            <ListBox Grid.Column="0" ItemsSource="{Binding Events}" SelectedItem="{Binding SelectedEvent}">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:EventRow">
+                                        <Grid ColumnDefinitions="64,Auto,*,Auto,Auto" ColumnSpacing="10">
+                                            <TextBlock Grid.Column="0" Classes="mono muted" Text="{Binding Time}" />
+                                            <Border Grid.Column="1" Classes="badge" Background="{Binding OutcomeBrush}" MinWidth="70"><TextBlock Text="{Binding Outcome}" HorizontalAlignment="Center" /></Border>
+                                            <TextBlock Grid.Column="2" Classes="mono" Text="{Binding Tool}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="3" Classes="muted" FontSize="11" Text="{Binding Risk}" />
+                                            <TextBlock Grid.Column="4" Classes="muted mono" Text="{Binding Duration}" MinWidth="56" TextAlignment="Right" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                            <Border Grid.Column="2" Classes="tile" Padding="10">
+                                <ScrollViewer>
+                                    <StackPanel Spacing="6" DataContext="{Binding SelectedEvent}" x:DataType="vm:EventRow">
+                                        <TextBlock Classes="label" Text="SELECTED CALL" Opacity="0.65" FontSize="11" />
+                                        <TextBlock Classes="mono" FontWeight="SemiBold" Text="{Binding Tool}" />
+                                        <TextBlock Classes="mono" TextWrapping="Wrap" Text="{Binding Detail}" FontSize="11" />
+                                    </StackPanel>
+                                </ScrollViewer>
+                            </Border>
+                        </Grid>
+                    </Grid>
+                </TabItem>
+
+                <TabItem Header="Tools">
+                    <Grid RowDefinitions="Auto,*" Margin="0,8,0,0">
+                        <TextBox Grid.Row="0" Text="{Binding ToolFilter}" PlaceholderText="Filter tools by name or description…" Margin="0,0,0,8" />
+                        <ListBox Grid.Row="1" ItemsSource="{Binding FilteredTools}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate x:DataType="vm:ToolRow">
+                                    <Grid ColumnDefinitions="*,Auto,Auto,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="10">
+                                        <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Spacing="8">
+                                            <TextBlock Classes="mono" FontWeight="SemiBold" Text="{Binding Name}" />
+                                            <Border Classes="badge" Background="#30363D" IsVisible="{Binding IsBridged}"><TextBlock Text="{Binding Bridge}" /></Border>
+                                        </StackPanel>
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding Description}" FontSize="12" Opacity="0.75" TextWrapping="Wrap" />
+                                        <Border Grid.Row="0" Grid.RowSpan="2" Grid.Column="1" Classes="badge" Background="{Binding RiskBrush}"><TextBlock Text="{Binding Risk}" /></Border>
+                                        <TextBlock Grid.Row="0" Grid.RowSpan="2" Grid.Column="2" Classes="muted" VerticalAlignment="Center" Text="{Binding VisibilityText}" MinWidth="70" />
+                                        <Button Grid.Row="0" Grid.RowSpan="2" Grid.Column="3" Command="{Binding RevealCommand}" Content="Unlock" Padding="8,2" VerticalAlignment="Center" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Grid>
+                </TabItem>
+            </TabControl>
+        </Grid>
+        </Panel>
+
+        <!-- ============================================================ configurator -->
+        <Panel Grid.Column="1" IsVisible="{Binding ShowConfig}">
+        <ScrollViewer DataContext="{Binding Config}" x:DataType="vm:ConfigViewModel" Padding="20,16">
+            <StackPanel Spacing="4" MaxWidth="900" HorizontalAlignment="Left">
+                <TextBlock Classes="h1" Text="Configurator &amp; launcher" />
+                <TextBlock Classes="muted" Text="Build the server command line, register it in your MCP clients, or start a local test instance." />
+
+                <TextBlock Classes="h2" Text="Server binary" />
+                <DockPanel>
+                    <Button DockPanel.Dock="Right" Command="{Binding BrowseServerCommand}" Content="Browse…" Margin="8,0,0,0" />
+                    <TextBox Classes="mono" Text="{Binding ServerPath}" PlaceholderText="/path/to/Hubris" />
+                </DockPanel>
+                <TextBlock Classes="muted" FontSize="11" Text="Not found – point this at the published Hubris executable." IsVisible="{Binding !ServerPathValid}" Foreground="#F85149" />
+
+                <TextBlock Classes="h2" Text="Policy" />
+                <StackPanel Orientation="Horizontal" Spacing="24">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock VerticalAlignment="Center" Text="Safe" />
+                        <ToggleSwitch IsChecked="{Binding IsBypass}" OnContent="" OffContent="" />
+                        <TextBlock VerticalAlignment="Center" Text="Bypass" />
+                    </StackPanel>
+                    <CheckBox IsChecked="{Binding Compact}" Content="Compact context (hide on-demand tools until unlocked)" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Spacing="24">
+                    <CheckBox IsChecked="{Binding Verbose}" Content="Verbose stderr logging" />
+                    <CheckBox IsChecked="{Binding NoControl}" Content="Disable control socket (no dashboard, no approvals)" />
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <TextBlock VerticalAlignment="Center" Text="Approval timeout (s)" />
+                        <TextBox Text="{Binding ApprovalTimeout}" Width="70" />
+                    </StackPanel>
+                </StackPanel>
+
+                <DockPanel Margin="0,14,0,6">
+                    <Button DockPanel.Dock="Right" Command="{Binding AddBridgeCommand}" Content="+ Add bridge" />
+                    <TextBlock Classes="h2" Margin="0" VerticalAlignment="Center" Text="External MCP servers (bridges)" />
+                </DockPanel>
+                <TextBlock Classes="muted" FontSize="11" Text="Each bridge is spawned as a child process; its tools appear as name__tool. Risk is read from the tool annotations." />
+                <ItemsControl ItemsSource="{Binding Bridges}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:BridgeRow">
+                            <Grid ColumnDefinitions="140,200,*,Auto" ColumnSpacing="8" Margin="0,4,0,0">
+                                <TextBox Grid.Column="0" Text="{Binding Name}" PlaceholderText="name (gh)" />
+                                <TextBox Grid.Column="1" Classes="mono" Text="{Binding Command}" PlaceholderText="command (npx)" />
+                                <TextBox Grid.Column="2" Classes="mono" Text="{Binding Args}" PlaceholderText="arguments (-y @modelcontextprotocol/server-github)" />
+                                <Button Grid.Column="3" Command="{Binding RemoveCommand}" Content="✕" Padding="8,4" />
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <TextBlock Classes="h2" Text="Resulting command" />
+                <DockPanel>
+                    <Button DockPanel.Dock="Right" Command="{Binding CopyCommandCommand}" Content="Copy" Margin="8,0,0,0" VerticalAlignment="Top" />
+                    <Border Classes="tile" Padding="10">
+                        <TextBlock Classes="mono" TextWrapping="Wrap" Text="{Binding CommandPreview}" />
+                    </Border>
+                </DockPanel>
+
+                <TextBlock Classes="h2" Text="Register in clients" />
+                <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                    <Border Grid.Column="0" Classes="tile" Padding="12">
+                        <StackPanel Spacing="8">
+                            <TextBlock FontWeight="SemiBold" Text="Claude Desktop" />
+                            <TextBlock Classes="mono" FontSize="11" TextWrapping="Wrap" Text="{Binding ClaudeConfigPath}" Opacity="0.7" />
+                            <Button Command="{Binding InstallClaudeCommand}" Content="Write claude__desktop__config.json" />
+                        </StackPanel>
+                    </Border>
+                    <Border Grid.Column="1" Classes="tile" Padding="12">
+                        <StackPanel Spacing="8">
+                            <TextBlock FontWeight="SemiBold" Text="VS Code workspace" />
+                            <DockPanel>
+                                <Button DockPanel.Dock="Right" Command="{Binding BrowseWorkspaceCommand}" Content="Choose…" Margin="8,0,0,0" />
+                                <TextBox Classes="mono" Text="{Binding WorkspaceFolder}" PlaceholderText="workspace folder" />
+                            </DockPanel>
+                            <TextBlock Classes="mono" FontSize="11" TextWrapping="Wrap" Text="{Binding VsCodeConfigPath}" Opacity="0.7" />
+                            <Button Command="{Binding InstallVsCodeCommand}" Content="Write .vscode/mcp.json" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+                <TextBlock Classes="muted" FontSize="11" Text="For Claude Code run:  claude mcp add hubris -- &lt;command above&gt;" Margin="0,6,0,0" />
+
+                <TextBlock Classes="h2" Text="Test instance" />
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <Button Command="{Binding LaunchTestCommand}" Content="▶ Launch test instance" />
+                    <TextBlock VerticalAlignment="Center" Classes="muted" FontSize="12" Text="Starts the server with these flags, keeps it alive and shows it in the sidebar so you can try approvals." />
+                </StackPanel>
+                <TextBlock Text="{Binding LastResult}" TextWrapping="Wrap" Margin="0,6,0,0" FontWeight="SemiBold" />
+
+                <DockPanel Margin="0,10,0,0">
+                    <Button DockPanel.Dock="Right" Command="{Binding ClearLogCommand}" Content="Clear" Padding="8,2" />
+                    <TextBlock Classes="h2" Margin="0" VerticalAlignment="Center" Text="Launcher log" />
+                </DockPanel>
+                <Border Classes="tile" Padding="8" MinHeight="120">
+                    <ScrollViewer MaxHeight="220">
+                        <TextBlock Classes="mono" TextWrapping="Wrap" Text="{Binding LogText}" FontSize="11" />
+                    </ScrollViewer>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+        </Panel>
+    </Grid>
+</Window>

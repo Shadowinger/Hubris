@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Hubris.Caching;
+using Hubris.Control;
 using Hubris.Protocol;
 using Hubris.Security;
 using Hubris.Tools;
@@ -18,11 +19,13 @@ public sealed class McpRouter
     private readonly FastLruCache _cache;
     private readonly HubRuntime _runtime;
     private readonly List<ExternalMcpBridge> _bridges;
+    private readonly ControlHub? _control;
     private readonly ConcurrentDictionary<RpcId, CancellationTokenSource> _inflight = new();
     private readonly CancellationTokenSource _shutdown = new();
     private volatile bool _initialized;
+    private long _callSeq;
 
-    public McpRouter(StdioTransport transport, ToolRegistry registry, SecurityInterceptor security, FastLruCache cache, HubRuntime runtime, List<ExternalMcpBridge> bridges)
+    public McpRouter(StdioTransport transport, ToolRegistry registry, SecurityInterceptor security, FastLruCache cache, HubRuntime runtime, List<ExternalMcpBridge> bridges, ControlHub? control = null)
     {
         _transport = transport;
         _registry = registry;
@@ -30,7 +33,14 @@ public sealed class McpRouter
         _cache = cache;
         _runtime = runtime;
         _bridges = bridges;
+        _control = control;
         foreach (var b in bridges) b.ToolsChanged += OnBridgeToolsChanged;
+
+        if (registry.TryGet(ExecuteToolMetaTool.ToolName, out var proxy) && proxy is ExecuteToolMetaTool exec)
+            exec.Invoker = (name, args, ct) => InvokeToolAsync(name, args, ct, viaProxy: true);
+
+        if (control is not null)
+            control.NotifyToolsChanged = () => _initialized ? SendToolsListChangedAsync() : ValueTask.CompletedTask;
     }
 
     public bool Initialized => _initialized;
@@ -151,14 +161,23 @@ public sealed class McpRouter
         }
 
         string version = McpProtocol.Negotiate(p?.ProtocolVersion);
-        if (p?.ClientInfo is { } ci) Log.Info($"client {ci.Name} {ci.Version} protocol={version}");
+        if (p?.ClientInfo is { } ci)
+        {
+            Log.Info($"client {ci.Name} {ci.Version} protocol={version}");
+            if (_control is not null)
+            {
+                _control.ClientName = string.IsNullOrEmpty(ci.Version) ? ci.Name : $"{ci.Name} {ci.Version}";
+                _control.WriteDescriptor();
+            }
+        }
 
         string modeText = ModeNames.ToText(_runtime.Mode);
         string instructions = _runtime.Mode == ExecutionMode.Safe
-            ? $"Hubris runs in {modeText} mode: read-only tools execute immediately; mutating tools are scanned for destructive patterns and destructive tools are blocked. A blocked call returns isError=true with a [SAFE MODE BLOCKED] message – ask the user to confirm or to restart Hubris with --mode=bypass."
+            ? $"Hubris runs in {modeText} mode: read-only tools execute immediately; mutating tools are scanned for destructive patterns and destructive tools are blocked. A blocked call either waits for the user to approve it in the Hubris desktop app or returns isError=true with a [SAFE MODE BLOCKED] message – in that case ask the user to approve it or to switch Hubris to Bypass mode."
             : $"Hubris runs in {modeText} mode: all tool calls execute without policy checks.";
+        instructions += $" Use {SearchToolsMetaTool.ToolName} with keywords to discover additional tools; discovered tools are unlocked and can be called directly or through {ExecuteToolMetaTool.ToolName}.";
         if (_runtime.CompactContext)
-            instructions += $" Compact context is enabled: only core tools are listed. Call {SearchToolsMetaTool.ToolName} with keywords to discover and unlock additional tools.";
+            instructions += " Compact context is enabled: only core tools are listed until unlocked.";
 
         var result = new InitializeResult
         {
@@ -185,30 +204,66 @@ public sealed class McpRouter
             return;
         }
 
-        if (!_registry.TryGet(p.Name, out var tool))
-        {
-            await SendToolResultAsync(msg.Id, CallToolResult.Error($"Unknown tool '{p.Name}'. Use {SearchToolsMetaTool.ToolName} to discover available tools."), ct).ConfigureAwait(false);
-            return;
-        }
+        CallToolResult result = await InvokeToolAsync(p.Name, p.Arguments, ct, viaProxy: false).ConfigureAwait(false);
+        await _transport.SendResultAsync(msg.Id, result, McpJsonContext.Default.CallToolResult, ct).ConfigureAwait(false);
+    }
 
-        var verdict = _security.Evaluate(tool.Name, tool.RiskLevel, p.Arguments);
+    // ------------------------------------------------------------------ the pipeline
+
+    /// <summary>
+    /// security → (approval) → cache → execute → DLP → cache store → events → unlock notifications.
+    /// Shared by direct tools/call and by mcp_execute_tool, so the proxy cannot bypass policy.
+    /// </summary>
+    private async ValueTask<CallToolResult> InvokeToolAsync(string name, JsonObject? args, CancellationToken ct, bool viaProxy)
+    {
+        string callId = $"{Environment.ProcessId}-{Interlocked.Increment(ref _callSeq)}";
+
+        if (!_registry.TryGet(name, out var tool))
+            return CallToolResult.Error($"Unknown tool '{name}'. Use {SearchToolsMetaTool.ToolName} to discover available tools.");
+
+        string outcome = "ok";
+        var verdict = _security.Evaluate(tool.Name, tool.RiskLevel, args);
         if (!verdict.Allowed)
         {
-            await SendToolResultAsync(msg.Id, CallToolResult.Error(verdict.Reason ?? SecurityInterceptor.BlockedPrefix), ct).ConfigureAwait(false);
-            return;
+            string reason = verdict.Reason ?? SecurityInterceptor.BlockedPrefix;
+            if (_control is { HasClients: true })
+            {
+                Log.Info($"holding '{tool.Name}' for approval");
+                ApprovalDecision decision = await _control.RequestApprovalAsync(tool.Name, tool.RiskLevel, reason, args, ct).ConfigureAwait(false);
+                if (decision != ApprovalDecision.Approved)
+                {
+                    string why = decision switch
+                    {
+                        ApprovalDecision.Denied => "Denied by the user in the Hubris desktop app.",
+                        ApprovalDecision.TimedOut => $"No decision within {_control.ApprovalTimeout.TotalSeconds:0}s.",
+                        _ => "Request cancelled.",
+                    };
+                    var denied = CallToolResult.Error($"{reason} {why}");
+                    _control.EmitToolCall(callId, tool.Name, tool.RiskLevel, ApprovalGate.DecisionText(decision), 0, args, denied);
+                    return denied;
+                }
+                outcome = "approved";
+                Log.Info($"'{tool.Name}' approved by user");
+            }
+            else
+            {
+                var blocked = CallToolResult.Error(reason);
+                _control?.EmitToolCall(callId, tool.Name, tool.RiskLevel, "blocked", 0, args, blocked);
+                return blocked;
+            }
         }
 
-        bool isMeta = tool is SearchToolsMetaTool;
-        bool cacheable = tool.RiskLevel == ToolRiskLevel.ReadOnly && !isMeta;
+        bool isMeta = tool is IUnlockingTool;
+        bool cacheable = tool.RiskLevel == ToolRiskLevel.ReadOnly && !isMeta && outcome == "ok";
         FastLruCache.CacheKey key = default;
         if (cacheable)
         {
-            key = FastLruCache.ComputeKey(tool.Name, p.Arguments);
+            key = FastLruCache.ComputeKey(tool.Name, args);
             if (_cache.TryGet(in key, out var cached) && cached is not null)
             {
                 Log.Debug($"cache hit {tool.Name}");
-                await SendToolResultAsync(msg.Id, cached, ct).ConfigureAwait(false);
-                return;
+                _control?.EmitToolCall(callId, tool.Name, tool.RiskLevel, "cached", 0, args, cached);
+                return cached;
             }
         }
 
@@ -216,10 +271,11 @@ public sealed class McpRouter
         long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         try
         {
-            result = await tool.ExecuteAsync(p.Arguments, ct).ConfigureAwait(false);
+            result = await tool.ExecuteAsync(args, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
+            _control?.EmitToolCall(callId, tool.Name, tool.RiskLevel, "cancelled", System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds, args, null);
             throw;
         }
         catch (Exception ex)
@@ -228,21 +284,27 @@ public sealed class McpRouter
             result = CallToolResult.Error($"{ex.GetType().Name}: {ex.Message}");
         }
         double ms = System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds;
-        Log.Debug($"{tool.Name} {(result.Failed ? "error" : "ok")} {ms:0.0}ms");
+        Log.Debug($"{tool.Name} {(result.Failed ? "error" : "ok")} {ms:0.0}ms{(viaProxy ? " (via proxy)" : "")}");
 
         result = DlpSanitizer.Sanitize(result);
 
         if (cacheable && !result.Failed)
             _cache.Set(in key, result);
 
-        await SendToolResultAsync(msg.Id, result, ct).ConfigureAwait(false);
+        if (result.Failed && outcome == "ok") outcome = "error";
+        _control?.EmitToolCall(callId, tool.Name, tool.RiskLevel, outcome, ms, args, result);
 
-        if (isMeta && tool is SearchToolsMetaTool meta && meta.LastCallRevealed)
-            await _transport.SendNotificationAsync("notifications/tools/list_changed", null, ct).ConfigureAwait(false);
+        if (tool is IUnlockingTool { LastCallUnlocked: true })
+        {
+            await SendToolsListChangedAsync().ConfigureAwait(false);
+            _control?.EmitToolsChanged();
+        }
+
+        return result;
     }
 
-    private ValueTask SendToolResultAsync(RpcId id, CallToolResult result, CancellationToken ct)
-        => _transport.SendResultAsync(id, result, McpJsonContext.Default.CallToolResult, ct);
+    private ValueTask SendToolsListChangedAsync()
+        => _transport.SendNotificationAsync("notifications/tools/list_changed", null, _shutdown.Token);
 
     private async ValueTask SafeSendErrorAsync(RpcId id, int code, string message)
     {
@@ -262,8 +324,8 @@ public sealed class McpRouter
                 _registry.UnregisterWhere(t => t is IBridgedTool bt && string.Equals(bt.BridgeName, bridge.Name, StringComparison.Ordinal));
                 foreach (var def in tools) _registry.Register(new BridgedTool(bridge, def));
                 Log.Info($"bridge '{bridge.Name}' tools refreshed: {tools.Count}");
-                if (_initialized)
-                    await _transport.SendNotificationAsync("notifications/tools/list_changed", null, _shutdown.Token).ConfigureAwait(false);
+                if (_initialized) await SendToolsListChangedAsync().ConfigureAwait(false);
+                _control?.EmitToolsChanged();
             }
             catch (Exception ex)
             {

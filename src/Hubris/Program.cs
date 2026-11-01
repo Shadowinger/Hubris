@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Hubris.Caching;
 using Hubris.Cli;
+using Hubris.Control;
 using Hubris.Engine;
 using Hubris.Protocol;
 using Hubris.Security;
@@ -24,8 +25,8 @@ if (opts.ShowHelp) { CliOptions.PrintUsage(); return 0; }
 if (opts.ShowVersion) { Console.Error.WriteLine($"Hubris {HubRuntime.Version}"); return 0; }
 Log.Verbose = opts.Verbose;
 
-if (opts.InstallVsCode) return AutoInstaller.InstallVsCode(Environment.CurrentDirectory, opts.ServerArgs());
-if (opts.InstallClaude) return AutoInstaller.InstallClaude(opts.ServerArgs());
+if (opts.InstallVsCode) return AutoInstaller.InstallVsCode(Environment.CurrentDirectory, Environment.ProcessPath, opts.ServerArgs());
+if (opts.InstallClaude) return AutoInstaller.InstallClaude(Environment.ProcessPath, opts.ServerArgs());
 
 // ---------------------------------------------------------------- server mode
 
@@ -51,7 +52,6 @@ var registry = new ToolRegistry(opts.Compact);
 var runtime = new HubRuntime
 {
     Uptime = uptime,
-    Mode = opts.Mode,
     CompactContext = opts.Compact,
     Cache = cache,
     Security = security,
@@ -60,6 +60,7 @@ var runtime = new HubRuntime
 
 registry.Register(new HubStatusTool(runtime));
 registry.Register(new SearchToolsMetaTool(registry));
+registry.Register(new ExecuteToolMetaTool(registry));
 registry.Register(new GitSmartStatusTool(pinned: !opts.Compact));
 registry.Register(new FsReadHeadTool(pinned: !opts.Compact));
 
@@ -82,29 +83,53 @@ foreach (var spec in opts.Bridges)
 }
 runtime.BridgeCount = bridges.Count;
 
-await using var transport = new StdioTransport();
-var router = new McpRouter(transport, registry, security, cache, runtime, bridges);
+ControlHub? control = null;
+if (!opts.NoControl)
+{
+    control = new ControlHub(runtime, registry, security, cache, TimeSpan.FromSeconds(opts.ApprovalTimeoutSec));
+    control.RequestShutdown = () => RequestShutdown("control channel");
+    try
+    {
+        control.Start();
+        runtime.Control = control;
+    }
+    catch (Exception ex)
+    {
+        Log.Warn($"control channel disabled: {ex.Message}");
+        await control.DisposeAsync();
+        control = null;
+    }
+}
+
+var transport = new StdioTransport();
+var router = new McpRouter(transport, registry, security, cache, runtime, bridges, control);
 
 Log.Info($"ready mode={ModeNames.ToText(opts.Mode)} compact={(opts.Compact ? "on" : "off")} tools={registry.Count} bridges={bridges.Count} startup={uptime.Elapsed.TotalMilliseconds:0.0}ms");
 
-try
+// A blocking console read cannot be cancelled on Unix, so a signal or a control-channel shutdown
+// must not wait for the read loop: race it against the shutdown token instead.
+var readLoop = Task.Run(async () =>
 {
-    await transport.RunReadLoopAsync(router.HandleAsync, shutdown.Token);
-}
-catch (Exception ex)
-{
-    Log.Error($"transport loop failed: {ex.Message}");
-}
+    try { await transport.RunReadLoopAsync(router.HandleAsync, shutdown.Token); }
+    catch (Exception ex) { Log.Error($"transport loop failed: {ex.Message}"); }
+});
+var shutdownSignalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+using var shutdownReg = shutdown.Token.Register(() => shutdownSignalled.TrySetResult());
+await Task.WhenAny(readLoop, shutdownSignalled.Task);
 
-if (!shutdown.IsCancellationRequested)
+bool stdinClosed = readLoop.IsCompleted;
+if (stdinClosed && !shutdown.IsCancellationRequested)
 {
     // Client closed stdin: finish what is already running, stdout is still open for the answers.
     Log.Debug("stdin closed; draining in-flight requests");
     await router.DrainAsync(TimeSpan.FromSeconds(30));
 }
-RequestShutdown("stdin closed");
+RequestShutdown(stdinClosed ? "stdin closed" : "signal");
 await router.ShutdownAsync();
+if (control is not null) await control.DisposeAsync();
 foreach (var b in bridges) await b.DisposeAsync();
+if (stdinClosed) await transport.DisposeAsync();
+else Log.Debug("stdin read still pending; exiting without draining it");
 Log.Info("bye");
 return 0;
 
@@ -122,6 +147,8 @@ public sealed class CliOptions
     public bool InstallClaude { get; private set; }
     public bool ShowHelp { get; private set; }
     public bool ShowVersion { get; private set; }
+    public bool NoControl { get; private set; }
+    public double ApprovalTimeoutSec { get; private set; } = 120;
     public List<BridgeSpec> Bridges { get; } = new();
 
     /// <summary>Arguments to persist in client configs so the installed server matches the current flags.</summary>
@@ -131,6 +158,8 @@ public sealed class CliOptions
         if (Mode == ExecutionMode.Bypass) list.Add("--mode=bypass");
         if (Compact) list.Add("--compact");
         if (Verbose) list.Add("--verbose");
+        if (NoControl) list.Add("--no-control");
+        if (ApprovalTimeoutSec != 120) list.Add($"--approval-timeout={ApprovalTimeoutSec.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
         foreach (var b in Bridges)
         {
             list.Add($"--bridge={b.Name}:{b.Command}");
@@ -154,6 +183,7 @@ public sealed class CliOptions
                 case "--verbose" or "-v": options.Verbose = true; continue;
                 case "--install-vscode": options.InstallVsCode = true; continue;
                 case "--install-claude": options.InstallClaude = true; continue;
+                case "--no-control": options.NoControl = true; continue;
                 case "--help" or "-h": options.ShowHelp = true; continue;
                 case "--version": options.ShowVersion = true; continue;
             }
@@ -168,6 +198,14 @@ public sealed class CliOptions
             {
                 if (i + 1 >= args.Length || !ModeNames.TryParseMode(args[i + 1], out var mode)) { error = "--mode requires safe|bypass"; return false; }
                 options.Mode = mode; i++;
+                continue;
+            }
+
+            if (a.StartsWith("--approval-timeout=", StringComparison.Ordinal))
+            {
+                if (!double.TryParse(a[19..], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var secs) || secs < 1 || secs > 3600)
+                { error = "--approval-timeout must be 1..3600 seconds"; return false; }
+                options.ApprovalTimeoutSec = secs;
                 continue;
             }
 
@@ -217,6 +255,8 @@ public sealed class CliOptions
             "  --compact          list only core tools; others are discoverable via mcp_search_tools\n" +
             "  --bridge=n:cmd     spawn an external stdio MCP server; its tools appear as n__<tool>\n" +
             "  --verbose          debug logging on stderr\n" +
+            "  --no-control       do not open the local control socket (no desktop UI, no approvals)\n" +
+            "  --approval-timeout=S  seconds a blocked call waits for Approve/Deny in the UI (default 120)\n" +
             "  --install-vscode   write .vscode/mcp.json in the current directory\n" +
             "  --install-claude   register in Claude Desktop's claude_desktop_config.json\n" +
             "  --version, --help\n");

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json.Nodes;
 using Hubris.Caching;
+using Hubris.Control;
 using Hubris.Protocol;
 using Hubris.Security;
 using Hubris.Tools;
@@ -13,7 +14,9 @@ namespace Hubris.Engine;
 public sealed class HubRuntime
 {
     public required Stopwatch Uptime { get; init; }
-    public required ExecutionMode Mode { get; init; }
+    /// <summary>Live mode; the interceptor owns it so the control channel can flip it at runtime.</summary>
+    public ExecutionMode Mode => Security.Mode;
+    public ControlHub? Control { get; set; }
     public required bool CompactContext { get; init; }
     public required FastLruCache Cache { get; init; }
     public required SecurityInterceptor Security { get; init; }
@@ -25,7 +28,7 @@ public sealed class HubRuntime
 public sealed class ToolRegistry
 {
     private readonly ConcurrentDictionary<string, IMcpTool> _tools = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, byte> _revealed = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, byte> _unlocked = new(StringComparer.Ordinal);
 
     public ToolRegistry(bool compactContext)
     {
@@ -68,10 +71,31 @@ public sealed class ToolRegistry
 
     public bool TryGet(string name, out IMcpTool tool) => _tools.TryGetValue(name, out tool!);
 
-    /// <summary>Marks an on-demand tool as visible for the rest of the session. Returns true if newly revealed.</summary>
-    public bool Reveal(string name) => _tools.ContainsKey(name) && _revealed.TryAdd(name, 0);
+    /// <summary>Marks an on-demand tool as unlocked for the rest of the session. Returns true if newly unlocked.</summary>
+    public bool Unlock(string name) => _tools.ContainsKey(name) && _unlocked.TryAdd(name, 0);
 
-    public bool IsVisible(IMcpTool tool) => !CompactContext || tool.Pinned || _revealed.ContainsKey(tool.Name);
+    public bool IsUnlocked(string name) => _unlocked.ContainsKey(name);
+
+    public bool IsVisible(IMcpTool tool) => !CompactContext || tool.Pinned || _unlocked.ContainsKey(tool.Name);
+
+    public List<ToolInfo> ToolInfos()
+    {
+        var list = new List<ToolInfo>(_tools.Count);
+        foreach (var tool in _tools.Values)
+        {
+            list.Add(new ToolInfo
+            {
+                Name = tool.Name,
+                Description = tool.Description,
+                Risk = ModeNames.ToText(tool.RiskLevel),
+                Pinned = tool.Pinned,
+                Visible = IsVisible(tool),
+                Bridge = tool is IBridgedTool bt ? bt.BridgeName : null,
+            });
+        }
+        list.Sort(static (a, b) => string.CompareOrdinal(a.Name, b.Name));
+        return list;
+    }
 
     public List<ToolDefinition> ListVisible()
     {

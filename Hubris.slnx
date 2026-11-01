@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Hubris.Core/Hubris.Core.csproj" />
+    <Project Path="src/Hubris.Desktop/Hubris.Desktop.csproj" />
+    <Project Path="src/Hubris/Hubris.csproj" />
+  </Folder>
+</Solution>
