@@ -41,6 +41,7 @@ public sealed class ControlMessage
     [JsonPropertyName("clients")] public int? Clients { get; set; }
     [JsonPropertyName("tools")] public List<ToolInfo>? Tools { get; set; }
     [JsonPropertyName("bridges")] public List<string>? Bridges { get; set; }
+    [JsonPropertyName("decisions")] public List<ToolDecision>? Decisions { get; set; }
 
     // ---- tool_call
     [JsonPropertyName("id")] public string? Id { get; set; }
@@ -56,6 +57,7 @@ public sealed class ControlMessage
     [JsonPropertyName("reason")] public string? Reason { get; set; }
     [JsonPropertyName("decision")] public string? Decision { get; set; }
     [JsonPropertyName("timeoutSec")] public double? TimeoutSec { get; set; }
+    [JsonPropertyName("remember")] public bool? Remember { get; set; }
 
     // ---- log
     [JsonPropertyName("level")] public string? Level { get; set; }
@@ -78,6 +80,15 @@ public sealed class ToolInfo
     [JsonPropertyName("unlocked")] public bool Unlocked { get; set; }
     [JsonPropertyName("tokens")] public int Tokens { get; set; }
     [JsonPropertyName("bridge")] public string? Bridge { get; set; }
+    /// <summary>Remembered session decision for this tool: "always", "never", or null.</summary>
+    [JsonPropertyName("decision")] public string? Decision { get; set; }
+}
+
+/// <summary>A remembered per-tool Safe-mode decision carried in status/hello.</summary>
+public sealed class ToolDecision
+{
+    [JsonPropertyName("tool")] public string Tool { get; set; } = string.Empty;
+    [JsonPropertyName("allow")] public bool Allow { get; set; }
 }
 
 /// <summary>Discovery record written to the runtime directory so UIs can find running hubs.</summary>
@@ -114,6 +125,8 @@ public static class ControlTypes
     public const string Deny = "deny";
     public const string Reveal = "reveal";
     public const string Lock = "lock";
+    public const string Forget = "forget";
+    public const string ListDecisions = "list_decisions";
     public const string ClearCache = "clear_cache";
     public const string ReloadConfig = "reload_config";
     public const string CacheMaintain = "cache_maintain";
@@ -125,6 +138,8 @@ public static class ControlTypes
 [JsonSerializable(typeof(ControlMessage))]
 [JsonSerializable(typeof(ToolInfo))]
 [JsonSerializable(typeof(List<ToolInfo>))]
+[JsonSerializable(typeof(ToolDecision))]
+[JsonSerializable(typeof(List<ToolDecision>))]
 [JsonSerializable(typeof(HubDescriptor))]
 public sealed partial class ControlJsonContext : JsonSerializerContext
 {

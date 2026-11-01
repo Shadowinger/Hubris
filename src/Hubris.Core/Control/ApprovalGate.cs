@@ -65,6 +65,8 @@ public sealed class ApprovalGate
         return decision;
     }
 
+    public bool TryGet(string id, out PendingApproval pending) => _pending.TryGetValue(id, out pending!);
+
     public bool Resolve(string id, bool approved)
     {
         if (!_pending.TryGetValue(id, out var p)) return false;

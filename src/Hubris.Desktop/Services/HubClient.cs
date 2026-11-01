@@ -67,11 +67,12 @@ public sealed class HubClient : IAsyncDisposable
     }
 
     public Task SetModeAsync(string mode) => SendAsync(new ControlMessage { Type = ControlTypes.SetMode, Mode = mode });
-    public Task ApproveAsync(string approvalId) => SendAsync(new ControlMessage { Type = ControlTypes.Approve, ApprovalId = approvalId });
-    public Task DenyAsync(string approvalId) => SendAsync(new ControlMessage { Type = ControlTypes.Deny, ApprovalId = approvalId });
+    public Task ApproveAsync(string approvalId, bool remember = false) => SendAsync(new ControlMessage { Type = ControlTypes.Approve, ApprovalId = approvalId, Remember = remember ? true : null });
+    public Task DenyAsync(string approvalId, bool remember = false) => SendAsync(new ControlMessage { Type = ControlTypes.Deny, ApprovalId = approvalId, Remember = remember ? true : null });
     public Task RevealAsync(string tool) => SendAsync(new ControlMessage { Type = ControlTypes.Reveal, Tool = tool });
     public Task LockAsync(string tool) => SendAsync(new ControlMessage { Type = ControlTypes.Lock, Tool = tool });
     public Task ReloadConfigAsync() => SendAsync(new ControlMessage { Type = ControlTypes.ReloadConfig });
+    public Task ForgetAsync(string tool) => SendAsync(new ControlMessage { Type = ControlTypes.Forget, Tool = tool });
     public Task ClearCacheAsync() => SendAsync(new ControlMessage { Type = ControlTypes.ClearCache });
     public Task RequestStatusAsync() => SendAsync(new ControlMessage { Type = ControlTypes.GetStatus });
     public Task RequestToolsAsync() => SendAsync(new ControlMessage { Type = ControlTypes.ListTools });

@@ -143,7 +143,24 @@ public sealed class ControlHub : IAsyncDisposable
     /// <summary>Awaited variant so a command's ack never overtakes the tools_changed it caused.</summary>
     public ValueTask EmitToolsChangedAsync() => Server.HasClients ? Server.BroadcastAsync(ToolsChangedMessage()) : ValueTask.CompletedTask;
 
-    private ControlMessage ToolsChangedMessage() => new() { Type = ControlTypes.ToolsChanged, Timestamp = DateTime.UtcNow.ToString("O"), Tools = _registry.ToolInfos() };
+    private ControlMessage ToolsChangedMessage() => new() { Type = ControlTypes.ToolsChanged, Timestamp = DateTime.UtcNow.ToString("O"), Tools = ToolInfos() };
+
+    /// <summary>Tool list stamped with each tool's remembered Safe-mode decision for UI pills.</summary>
+    private List<ToolInfo> ToolInfos()
+    {
+        var list = _registry.ToolInfos();
+        foreach (var t in list)
+            t.Decision = _security.DecisionFor(t.Name) switch { true => "always", false => "never", _ => null };
+        return list;
+    }
+
+    private List<ToolDecision> DecisionList()
+    {
+        var list = new List<ToolDecision>();
+        foreach (var kv in _security.Decisions) list.Add(new ToolDecision { Tool = kv.Key, Allow = kv.Value });
+        list.Sort(static (a, b) => string.CompareOrdinal(a.Tool, b.Tool));
+        return list;
+    }
 
     private static string? Preview(CallToolResult? result)
     {
@@ -204,13 +221,14 @@ public sealed class ControlHub : IAsyncDisposable
         m.ActiveTools = ctx.ActiveTools;
         m.ActiveTokens = ctx.ActiveTokens;
         m.TotalTokens = ctx.TotalTokens;
+        m.Decisions = DecisionList();
     }
 
     private ControlMessage BuildHello()
     {
         var m = ControlMessage.Of(ControlTypes.Hello);
         FillStatus(m);
-        m.Tools = _registry.ToolInfos();
+        m.Tools = ToolInfos();
         return m;
     }
 
@@ -235,7 +253,11 @@ public sealed class ControlHub : IAsyncDisposable
                     break;
 
                 case ControlTypes.ListTools:
-                    await client.SendAsync(new ControlMessage { Type = ControlTypes.ToolsChanged, Timestamp = DateTime.UtcNow.ToString("O"), Tools = _registry.ToolInfos(), ReqId = cmd.ReqId }).ConfigureAwait(false);
+                    await client.SendAsync(new ControlMessage { Type = ControlTypes.ToolsChanged, Timestamp = DateTime.UtcNow.ToString("O"), Tools = ToolInfos(), ReqId = cmd.ReqId }).ConfigureAwait(false);
+                    return;
+
+                case ControlTypes.ListDecisions:
+                    await client.SendAsync(new ControlMessage { Type = ControlTypes.Status, Timestamp = DateTime.UtcNow.ToString("O"), Decisions = DecisionList(), ReqId = cmd.ReqId }).ConfigureAwait(false);
                     return;
 
                 case ControlTypes.SetMode:
@@ -252,7 +274,23 @@ public sealed class ControlHub : IAsyncDisposable
                 case ControlTypes.Approve:
                 case ControlTypes.Deny:
                     if (string.IsNullOrEmpty(cmd.ApprovalId)) { Fail(ack, "approvalId required"); break; }
-                    if (!Approvals.Resolve(cmd.ApprovalId, cmd.Type == ControlTypes.Approve)) Fail(ack, $"no pending approval '{cmd.ApprovalId}'");
+                    bool approve = cmd.Type == ControlTypes.Approve;
+                    // Record the remembered decision before Resolve removes the pending entry we read the tool name from.
+                    if (cmd.Remember == true && Approvals.TryGet(cmd.ApprovalId, out var pending))
+                    {
+                        _security.Remember(pending.Tool, approve);
+                        await EmitToolsChangedAsync().ConfigureAwait(false);
+                    }
+                    if (!Approvals.Resolve(cmd.ApprovalId, approve)) Fail(ack, $"no pending approval '{cmd.ApprovalId}'");
+                    break;
+
+                case ControlTypes.Forget:
+                    if (string.IsNullOrEmpty(cmd.Tool)) { Fail(ack, "tool required"); break; }
+                    if (_security.Forget(cmd.Tool))
+                    {
+                        Log.Info($"forgot remembered decision for '{cmd.Tool}' (control client {client.Id})");
+                        await EmitToolsChangedAsync().ConfigureAwait(false);
+                    }
                     break;
 
                 case ControlTypes.Reveal:

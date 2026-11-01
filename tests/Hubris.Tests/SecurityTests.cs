@@ -68,6 +68,21 @@ public class SecurityInterceptorTests
         var s = new SecurityInterceptor(ExecutionMode.Safe) { Mode = ExecutionMode.Bypass };
         Assert.True(s.Evaluate("nuke", ToolRiskLevel.Destructive, null).Allowed);
     }
+
+    [Fact]
+    public void Session_decisions_are_recorded_listed_and_forgotten()
+    {
+        var s = new SecurityInterceptor(ExecutionMode.Safe);
+        Assert.Null(s.DecisionFor("t"));
+        s.Remember("t", allow: true);
+        Assert.True(s.DecisionFor("t"));
+        s.Remember("t", allow: false); // latest wins
+        Assert.False(s.DecisionFor("t"));
+        Assert.Single(s.Decisions);
+        Assert.True(s.Forget("t"));
+        Assert.Null(s.DecisionFor("t"));
+        Assert.False(s.Forget("t")); // already gone
+    }
 }
 
 public class DlpSanitizerTests
