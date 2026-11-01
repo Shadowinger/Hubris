@@ -29,6 +29,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <AvaloniaResource Include="Assets/**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="../Hubris.Core/Hubris.Core.csproj" />
   </ItemGroup>
 

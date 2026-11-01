@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds artifacts/Hubris.app: the Native AOT desktop app plus the Hubris server binary side by side,
-# Info.plist with the version from Directory.Build.props, a generated placeholder icon, ad-hoc signature.
+# Info.plist with the version from Directory.Build.props, a Hubris icon rendered by build/render-icon.py, ad-hoc signature.
 #
 #   build/bundle-macos.sh                 # publish both projects, then bundle
 #   build/bundle-macos.sh --no-publish    # bundle what is already in bin/Release/.../publish
@@ -51,7 +51,7 @@ PLIST
 echo "== icon"
 iconset=$(mktemp -d)/Hubris.iconset
 mkdir -p "$iconset"
-python3 -I build/make-icon.py "$iconset/icon_512x512@2x.png" 1024
+python3 -I build/render-icon.py "$iconset/icon_512x512@2x.png" 1024
 for s in 16 32 128 256 512; do
   sips -z $s $s "$iconset/icon_512x512@2x.png" --out "$iconset/icon_${s}x${s}.png" >/dev/null
   d=$((s * 2)); [ $s -lt 512 ] && sips -z $d $d "$iconset/icon_512x512@2x.png" --out "$iconset/icon_${s}x${s}@2x.png" >/dev/null

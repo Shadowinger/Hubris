@@ -35,6 +35,13 @@ The bundle contains the desktop app, the `Hubris` server next to it (the configu
 the native Skia/HarfBuzz/Avalonia libraries, an `Info.plist` with the version from `Directory.Build.props`
 and a generated placeholder icon. `open artifacts/Hubris.app` starts it.
 
+## Brand
+
+`brand/` holds the identity: `hubris-icon.svg` (app icon, 1024), `hubris-mark*.svg` (the sheared-disc mark alone,
+`currentColor` plus light/dark variants), `hubris-wordmark-*.svg` (mark + "Hubris" in Inter) and PNG renders of the
+icon from 16 to 1024 px with alpha. `build/render-icon.py` draws the icon from the same geometry with the standard
+library only, so the `.icns` in the bundle never depends on an SVG rasteriser.
+
 ## Run
 
 ```bash

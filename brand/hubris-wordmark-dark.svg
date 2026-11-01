@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 120" width="420" height="120">
+  
+  <g transform="translate(20 20) scale(0.1282) translate(-236 -200)" fill="#F2F3F5">
+    <path d="M498 300 A262 262 0 0 0 498 824 Z"/><path d="M526 200 A262 262 0 0 1 526 724 Z"/>
+  </g>
+  <text x="108" y="79" font-family="Inter, 'SF Pro Display', system-ui, sans-serif" font-size="56" font-weight="600" letter-spacing="-1.6" fill="#F2F3F5">Hubris</text>
+</svg>

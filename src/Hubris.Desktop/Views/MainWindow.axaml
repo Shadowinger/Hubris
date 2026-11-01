@@ -4,6 +4,7 @@
         x:Class="Hubris.Desktop.Views.MainWindow"
         x:DataType="vm:MainViewModel"
         Title="Hubris"
+        Icon="/Assets/hubris.png"
         Width="1180" Height="760" MinWidth="900" MinHeight="560"
         WindowStartupLocation="CenterScreen">
 
@@ -12,9 +13,14 @@
         <!-- ============================================================ sidebar -->
         <Border Grid.Column="0" Background="#0C0D0E" BorderBrush="#1B1D21" BorderThickness="0,0,1,0" Padding="10,14,10,12">
             <DockPanel>
-                <StackPanel DockPanel.Dock="Top" Margin="6,0,6,14" Spacing="1">
-                    <TextBlock Classes="h1" Text="Hubris" FontSize="14" />
-                    <TextBlock Classes="muted" FontSize="11" Text="MCP gateway control" />
+                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="6,0,6,14" Spacing="9">
+                    <!-- the sheared-disc mark, same geometry as brand/hubris-mark.svg -->
+                    <Path Fill="#F2F3F5" Width="18" Height="20" Stretch="Uniform" VerticalAlignment="Center"
+                          Data="M498 300 A262 262 0 0 0 498 824 Z M526 200 A262 262 0 0 1 526 724 Z" />
+                    <StackPanel Spacing="1" VerticalAlignment="Center">
+                        <TextBlock Classes="h1" Text="Hubris" FontSize="14" />
+                        <TextBlock Classes="muted" FontSize="11" Text="MCP gateway control" />
+                    </StackPanel>
                 </StackPanel>
 
                 <Button DockPanel.Dock="Top" Classes="ghost" Classes.on="{Binding ShowConfig}" Command="{Binding ShowConfigCommand}"
