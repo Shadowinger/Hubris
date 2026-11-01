@@ -8,6 +8,8 @@ calls in Safe mode and asks you in a desktop app before letting them through.
 .NET 10, Native AOT, no reflection, no runtime to install. A desktop app (Avalonia) does configuration,
 takeover of existing client configs, live call view and approvals.
 
+![Hubris desktop app, dashboard of a running hub](docs/hubris-dashboard.png)
+
 ## Numbers
 
 Measured on an M-series Mac with the 4 bridges from my own `~/.hubris/config.json`
@@ -143,4 +145,4 @@ brand/               icon, mark, wordmark
 ## Status
 
 Works on macOS. Paths for the client configs on Windows and Linux are in the code but not tested there.
-Version 1.1.0.
+Version 1.1.0. MIT license.
