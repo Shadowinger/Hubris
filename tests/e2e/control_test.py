@@ -227,6 +227,10 @@ t = rpc2({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"hub_sta
 check("toolcache=hits 1/miss 0" in t and "bridges=1 (0 running)" in t and "tools=8" in t, "second run: tools listed from cache, bridge process NOT started")
 children = [l for l in subprocess.run(["ps","-ax","-o","command="], capture_output=True, text=True).stdout.splitlines() if "echo_server.py" in l and "--stdio" not in l]
 check(not children, "no echo_server child before the first bridged call")
+rn = rpc2({"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"mcp_execute_tool","arguments":{"toolName":"py__nuke","arguments":{}}}})
+tn = rn["result"]["content"][0]["text"]
+children = [l for l in subprocess.run(["ps","-ax","-o","command="], capture_output=True, text=True).stdout.splitlines() if "echo_server.py" in l and "--stdio" not in l]
+check(rn["result"].get("isError") and "Risk=Destructive" in tn and not children, "cached destructive tool is blocked by Safe mode without spawning the bridge")
 r = rpc2({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"mcp_execute_tool","arguments":{"toolName":"py__peek","arguments":{"what":"lazy"}}}})
 check(r["result"]["content"][0]["text"].startswith("echo:peek"), "first bridged call spawned the child and answered")
 t = rpc2({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"hub_status"}})["result"]["content"][0]["text"]

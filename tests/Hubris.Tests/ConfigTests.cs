@@ -7,6 +7,9 @@ public class ConfigTests : IDisposable
 {
     private readonly string _home = Directory.CreateTempSubdirectory("hubris-home-").FullName;
 
+    // Every snapshot/backup written by these tests must land in the temp home, never in ~/.hubris.
+    public ConfigTests() => Environment.SetEnvironmentVariable("HUBRIS_HOME", _home);
+
     private string Write(string relative, string content)
     {
         string path = Path.Combine(_home, relative);
@@ -59,7 +62,7 @@ public class ConfigTests : IDisposable
         Assert.Equal("t", desktop.Servers[0].Env["GITHUB_TOKEN"]);
 
         var code = Assert.Single(clients, c => c.Kind == ClientConfigScanner.ClaudeCode);
-        Assert.Equal(["fs"], code.Servers.Select(s => s.Name)); // "gw" launches Hubris -> loop guard
+        Assert.Equal(["fs", "p"], code.Servers.Select(s => s.Name)); // "gw" launches Hubris -> loop guard; "p" comes from projects["/x"]
         Assert.True(code.HubrisPresent);
 
         var cursor = Assert.Single(clients, c => c.Kind == ClientConfigScanner.Cursor);
@@ -76,12 +79,12 @@ public class ConfigTests : IDisposable
         var cfg = new HubrisConfig();
         cfg.Bridges.Add(new BridgeConfig { Name = "fs", Command = "node", Args = ["other"] });
         var result = ClientConfigHijacker.Import(client, cfg);
-        Assert.Equal(["fs-2", "db"], result.Added);
-        Assert.Equal(["fs", "fs-2", "db"], cfg.Bridges.Select(b => b.Name));
+        Assert.Equal(["fs-2", "db", "p"], result.Added);
+        Assert.Equal(["fs", "fs-2", "db", "p"], cfg.Bridges.Select(b => b.Name));
         var second = ClientConfigHijacker.Import(client, cfg); // idempotent
         Assert.Empty(second.Added);
-        Assert.Equal(["fs", "db"], second.Skipped);
-        Assert.Equal(3, cfg.Bridges.Count);
+        Assert.Equal(["fs", "db", "p"], second.Skipped);
+        Assert.Equal(4, cfg.Bridges.Count);
 
         string backup = ClientConfigHijacker.Hijack(client, "/opt/Hubris", ["--stdio", "--compact"]);
         Assert.True(File.Exists(backup));
@@ -89,15 +92,15 @@ public class ConfigTests : IDisposable
         var servers = (JsonObject)root["mcpServers"]!;
         Assert.Equal(["hubris"], servers.Select(kv => kv.Key));
         Assert.Equal("/opt/Hubris", servers["hubris"]!["command"]!.GetValue<string>());
-        Assert.NotNull(root["projects"]!["/x"]!["mcpServers"]!["p"]); // per-project block untouched
+        Assert.Empty((JsonObject)root["projects"]!["/x"]!["mcpServers"]!); // full takeover: per-project block cleared
         Assert.True(root["keep"]!.GetValue<bool>());
 
         var after = ClientConfigScanner.Parse(ClientConfigScanner.ClaudeCode, path)!;
         Assert.True(after.IsGateway);
 
-        Assert.Equal(backup, ClientConfigHijacker.Restore(client));
+        Assert.EndsWith("claude_mcp_snapshot.json", ClientConfigHijacker.Restore(client)); // snapshot wins over the file backup
         var restored = ClientConfigScanner.Parse(ClientConfigScanner.ClaudeCode, path)!;
-        Assert.Equal(["fs", "db"], restored.Servers.Select(s => s.Name));
+        Assert.Equal(["fs", "db", "p"], restored.Servers.Select(s => s.Name));
     }
 
     [Fact]
@@ -111,5 +114,78 @@ public class ConfigTests : IDisposable
         Assert.Null(root["servers"]!["a"]);
     }
 
-    public void Dispose() { try { Directory.Delete(_home, true); } catch (IOException) { } }
+    [Fact]
+    public void Deep_scan_dedupes_takes_over_projects_and_restores_surgically()
+    {
+        string path = Write(".claude.json", """
+            {
+              "mcpServers": { "fs": { "command": "uvx", "args": ["mcp-fs"] } },
+              "projects": {
+                "/w/alpha": { "allowedTools": ["Bash"], "mcpServers": { "fs": { "command": "uvx", "args": ["mcp-fs"] }, "db": { "command": "npx", "args": ["db"] } } },
+                "/w/beta":  { "mcpServers": { "db": { "command": "npx", "args": ["db", "--other"] } } },
+                "/w/empty": { "mcpServers": {} }
+              },
+              "numStartups": 7
+            }
+            """);
+        var client = ClientConfigScanner.Parse(ClientConfigScanner.ClaudeCode, path)!;
+        Assert.Equal(4, client.Servers.Count);
+        Assert.Equal(2, client.ProjectBlocksWithServers);
+        Assert.Equal(["", "/w/alpha", "/w/alpha", "/w/beta"], client.Servers.Select(s => s.Scope));
+
+        var cfg = new HubrisConfig();
+        var result = ClientConfigHijacker.Import(client, cfg);
+        Assert.Equal(["fs", "db", "db-beta"], result.Added);       // same launch merged, clashing launch scoped by project folder
+        Assert.Equal(["fs"], result.Skipped);
+        Assert.Equal("claude-code:/w/beta", cfg.Bridges[2].Source);
+
+        ClientConfigHijacker.Hijack(client, "/opt/Hubris", ["--stdio"]);
+        var root = (JsonObject)JsonNode.Parse(File.ReadAllText(path))!;
+        Assert.Equal(["hubris"], ((JsonObject)root["mcpServers"]!).Select(kv => kv.Key));
+        Assert.Empty((JsonObject)root["projects"]!["/w/alpha"]!["mcpServers"]!);
+        Assert.Empty((JsonObject)root["projects"]!["/w/beta"]!["mcpServers"]!);
+        Assert.Equal("Bash", root["projects"]!["/w/alpha"]!["allowedTools"]![0]!.GetValue<string>());
+        Assert.Equal(7, root["numStartups"]!.GetValue<int>());
+        Assert.True(File.Exists(Path.Combine(_home, "backups", "claude_mcp_snapshot.json")));
+        Assert.True(ClientConfigScanner.Parse(ClientConfigScanner.ClaudeCode, path)!.IsGateway);
+
+        // Claude Code keeps working and writes new state after the takeover; restore must keep it.
+        root["projects"]!["/w/alpha"]!["history"] = new JsonArray("later");
+        root["numStartups"] = 8;
+        File.WriteAllText(path, root.ToJsonString());
+
+        Assert.EndsWith("claude_mcp_snapshot.json", ClientConfigHijacker.Restore(client));
+        var restored = (JsonObject)JsonNode.Parse(File.ReadAllText(path))!;
+        Assert.Equal(["fs"], ((JsonObject)restored["mcpServers"]!).Select(kv => kv.Key));
+        Assert.Equal(["fs", "db"], ((JsonObject)restored["projects"]!["/w/alpha"]!["mcpServers"]!).Select(kv => kv.Key));
+        Assert.Equal("--other", restored["projects"]!["/w/beta"]!["mcpServers"]!["db"]!["args"]![1]!.GetValue<string>());
+        Assert.Equal("later", restored["projects"]!["/w/alpha"]!["history"]![0]!.GetValue<string>());
+        Assert.Equal(8, restored["numStartups"]!.GetValue<int>());
+        Assert.False(File.Exists(Path.Combine(_home, "backups", "claude_mcp_snapshot.json")));
+    }
+
+    [Fact]
+    public void Project_scan_finds_workspace_configs_and_can_empty_them()
+    {
+        Write(Path.Combine("dev", "alpha", ".mcp.json"), """{ "mcpServers": { "a": { "command": "npx", "args": ["a"] } } }""");
+        Write(Path.Combine("dev", "beta", ".cursor", "mcp.json"), """{ "mcpServers": { "b": { "command": "node", "args": ["b.js"] } } }""");
+        Write(Path.Combine("dev", "gamma", ".vscode", "mcp.json"), """{ "servers": { "c": { "type": "stdio", "command": "c" } } }""");
+        Write(Path.Combine("dev", "node_modules", "pkg", ".mcp.json"), """{ "mcpServers": { "ignored": { "command": "x" } } }""");
+
+        var found = ClientConfigScanner.ScanProjects(Path.Combine(_home, "dev"));
+        Assert.Equal(["Claude Code project", "Cursor project", "VS Code workspace"], found.Select(c => c.Kind.Name).OrderBy(n => n));
+        Assert.All(found, c => Assert.Single(c.Servers));
+
+        var mcp = found.Single(c => c.Kind == ClientConfigScanner.ProjectMcp);
+        ClientConfigHijacker.Hijack(mcp, "/opt/Hubris", ["--stdio"], empty: true);
+        Assert.Equal("{}", JsonNode.Parse(File.ReadAllText(mcp.Path))!["mcpServers"]!.ToJsonString());
+        Assert.True(ClientConfigScanner.Parse(ClientConfigScanner.ProjectMcp, mcp.Path)!.IsGateway);
+        Assert.True(ClientConfigHijacker.HasRestorePoint(mcp.Path));
+    }
+
+    public void Dispose()
+    {
+        Environment.SetEnvironmentVariable("HUBRIS_HOME", null);
+        try { Directory.Delete(_home, true); } catch (IOException) { }
+    }
 }

@@ -294,6 +294,11 @@
                                 <TextBlock Classes="muted" FontSize="11" TextWrapping="Wrap" Text="MCP servers found in Claude Desktop, Claude Code, Cursor, Windsurf and the chosen VS Code workspace. Import turns them into bridges and leaves Hubris as the client's only server (backup kept)." />
                             </StackPanel>
                         </DockPanel>
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Command="{Binding ScanProjectsCommand}" Content="Scan projects" Margin="8,0,0,0" />
+                            <Button DockPanel.Dock="Right" Classes="ghost" Command="{Binding BrowseProjectRootCommand}" Content="Browse" Margin="8,0,0,0" />
+                            <TextBox Classes="mono" Text="{Binding ProjectRoot}" PlaceholderText="project root to walk for .mcp.json / .cursor/mcp.json / .vscode/mcp.json (depth 4)" />
+                        </DockPanel>
                         <TextBlock Classes="muted" FontSize="12" Text="No client configs found." IsVisible="{Binding NoClients}" />
                         <ItemsControl ItemsSource="{Binding Clients}">
                             <ItemsControl.ItemTemplate>

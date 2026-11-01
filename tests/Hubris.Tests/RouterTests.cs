@@ -89,6 +89,23 @@ internal sealed class HubHarness : IAsyncDisposable
 public class RouterTests
 {
     [Fact]
+    public async Task Cached_destructive_bridged_tool_is_gated_before_the_bridge_starts()
+    {
+        await using var hub = new HubHarness(compact: false);
+        var bridge = new ExternalMcpBridge("py", "/nonexistent/server", []);
+        var cachedDef = new ToolDefinition { Name = "nuke", Description = "from cache", InputSchema = new JsonObject { ["type"] = "object" }, Annotations = new ToolAnnotations { DestructiveHint = true } };
+        hub.Registry.Register(new BridgedTool(bridge, cachedDef));
+
+        var direct = await hub.ToolAsync("py__nuke", new JsonObject { ["x"] = 1 });
+        Assert.True(direct["isError"]!.GetValue<bool>());
+        Assert.StartsWith("[SAFE MODE BLOCKED]", direct["content"]![0]!["text"]!.GetValue<string>());
+
+        var viaProxy = await hub.ToolAsync("mcp_execute_tool", new JsonObject { ["toolName"] = "py__nuke", ["arguments"] = new JsonObject() });
+        Assert.True(viaProxy["isError"]!.GetValue<bool>());
+        Assert.False(bridge.IsStarted); // nothing was spawned on the way to the verdict
+    }
+
+    [Fact]
     public async Task Initialize_ping_and_list_answer_with_matching_ids()
     {
         await using var hub = new HubHarness();

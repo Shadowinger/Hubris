@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Hubris.Cli;
 using Hubris.Control;
@@ -26,6 +27,9 @@ public sealed class HubrisConfig
 [JsonSourceGenerationOptions(WriteIndented = true, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(HubrisConfig))]
 [JsonSerializable(typeof(BridgeConfig))]
+[JsonSerializable(typeof(McpSnapshot))]
+[JsonSerializable(typeof(JsonObject))]
+[JsonSerializable(typeof(Dictionary<string, JsonObject>))]
 public sealed partial class ConfigJsonContext : JsonSerializerContext
 {
 }

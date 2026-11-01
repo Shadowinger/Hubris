@@ -41,6 +41,8 @@ public sealed class ConfigViewModel : ObservableObject
         SetBypassCommand = new RelayCommand(() => IsBypass = true);
 
         ScanClientsCommand = new RelayCommand(ScanClients);
+        ScanProjectsCommand = new RelayCommand(ScanProjects, () => Directory.Exists(_projectRoot));
+        BrowseProjectRootCommand = new AsyncCommand(async () => { if (PickFolder is { } pick && await pick() is { } dir) ProjectRoot = dir; });
         SaveBridgesCommand = new RelayCommand(SaveBridges);
         LoadBridges();
         ScanClients();
@@ -50,6 +52,10 @@ public sealed class ConfigViewModel : ObservableObject
     public Func<Task<int>>? ReloadRunningHubs { get; set; }
 
     public ObservableCollection<DetectedClientRow> Clients { get; } = new();
+    private string _projectRoot = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+    public string ProjectRoot { get => _projectRoot; set { if (Set(ref _projectRoot, value)) ScanProjectsCommand.RaiseCanExecuteChanged(); } }
+    public RelayCommand ScanProjectsCommand { get; }
+    public AsyncCommand BrowseProjectRootCommand { get; }
     public bool NoClients => Clients.Count == 0;
     public string ConfigPath => HubrisPaths.ConfigPath;
     public RelayCommand ScanClientsCommand { get; }
@@ -104,6 +110,20 @@ public sealed class ConfigViewModel : ObservableObject
         Raise(nameof(NoClients));
     }
 
+    /// <summary>Appends project-level configs under ProjectRoot (depth 4); global rows stay.</summary>
+    private void ScanProjects()
+    {
+        for (int i = Clients.Count - 1; i >= 0; i--) if (Clients[i].Client.Kind.IsProjectLevel) Clients.RemoveAt(i);
+        var found = ClientConfigScanner.ScanProjects(_projectRoot);
+        foreach (var c in found) Clients.Add(new DetectedClientRow(c, ImportClient, RestoreClient));
+        LastResult = $"{found.Count} project config(s) under {_projectRoot}.";
+        Raise(nameof(NoClients));
+    }
+
+    /// <summary>A project file may be emptied when that client's global config already routes through Hubris.</summary>
+    private bool GlobalIsGateway(DetectedClient client)
+        => client.Kind.GlobalKindId is { } g && Clients.Any(r => r.Client.Kind.Id == g && r.IsGateway);
+
     private void ImportClient(DetectedClient client)
     {
         if (!ServerPathValid) { LastResult = "✗ Point 'Server binary' at the Hubris executable first."; return; }
@@ -112,11 +132,12 @@ public sealed class ConfigViewModel : ObservableObject
             var cfg = SafeLoad();
             var result = ClientConfigHijacker.Import(client, cfg);
             HubrisConfigFile.Save(cfg);
-            string backup = ClientConfigHijacker.Hijack(client, _serverPath, BuildServerArgs());
-            LastResult = $"✓ {client.Kind.Name}: imported {result.Added.Count} bridge(s) ({string.Join(", ", result.Added)}), {result.Skipped.Count} already present; config rewritten, backup {Path.GetFileName(backup)}. Restart the client to pick it up.";
+            bool empty = GlobalIsGateway(client);
+            string backup = ClientConfigHijacker.Hijack(client, _serverPath, BuildServerArgs(), empty);
+            LastResult = $"✓ {client.Kind.Name}: imported {result.Added.Count} bridge(s) ({string.Join(", ", result.Added)}), {result.Skipped.Count} already present; {(empty ? "server block emptied (global client already routes through Hubris)" : "config rewritten")}, {client.ProjectBlocksWithServers} project block(s) cleared, backup {Path.GetFileName(backup)}. Restart the client to pick it up.";
             AppendLog(LastResult);
             LoadBridges();
-            ScanClients();
+            RescanKeepingProjects();
             _ = NotifyHubsAsync();
         }
         catch (Exception ex)
@@ -131,15 +152,22 @@ public sealed class ConfigViewModel : ObservableObject
         try
         {
             string? used = ClientConfigHijacker.Restore(client);
-            LastResult = used is null ? $"✗ {client.Kind.Name}: no Hubris backup next to {client.Path}" : $"✓ {client.Kind.Name}: restored from {Path.GetFileName(used)}. Restart the client to pick it up.";
+            LastResult = used is null ? $"✗ {client.Kind.Name}: no Hubris snapshot or backup for {client.Path}" : $"✓ {client.Kind.Name}: restored from {Path.GetFileName(used)}. Restart the client to pick it up.";
             AppendLog(LastResult);
-            ScanClients();
+            RescanKeepingProjects();
         }
         catch (Exception ex)
         {
             LastResult = $"✗ Restore failed: {ex.Message}";
             AppendLog(LastResult);
         }
+    }
+
+    private void RescanKeepingProjects()
+    {
+        bool hadProjects = Clients.Any(r => r.Client.Kind.IsProjectLevel);
+        ScanClients();
+        if (hadProjects) ScanProjects();
     }
 
     private async Task NotifyHubsAsync()
@@ -320,10 +348,10 @@ public sealed class DetectedClientRow
         Name = client.Kind.Name;
         Path = client.Path;
         ServerCount = client.Servers.Count;
-        ServersText = ServerCount == 1 ? "1 server" : $"{ServerCount} servers";
-        ServerNames = string.Join(", ", client.Servers.Select(s => s.Name));
+        ServersText = (ServerCount == 1 ? "1 server" : $"{ServerCount} servers") + (client.ProjectBlocksWithServers > 0 ? $" · {client.ProjectBlocksWithServers} project block(s)" : "");
+        ServerNames = string.Join(", ", client.Servers.Select(s => s.Scope.Length > 0 ? $"{s.Name} ({System.IO.Path.GetFileName(s.Scope.TrimEnd('/'))})" : s.Name).Distinct());
         IsGateway = client.IsGateway;
-        HasBackup = ClientConfigHijacker.LatestBackup(client.Path) is not null;
+        HasBackup = ClientConfigHijacker.HasRestorePoint(client.Path);
         ImportCommand = new RelayCommand(() => import(client), () => !IsGateway);
         RestoreCommand = new RelayCommand(() => restore(client), () => HasBackup);
     }
@@ -337,7 +365,7 @@ public sealed class DetectedClientRow
     public bool HasServers => ServerCount > 0;
     public bool IsGateway { get; }
     public bool HasBackup { get; }
-    public string ActionText => IsGateway ? "Already routed through Hubris" : ServerCount == 0 ? "Register Hubris" : "Import & hijack";
+    public string ActionText => IsGateway ? "Already routed through Hubris" : ServerCount == 0 ? "Register Hubris" : Client.ProjectBlocksWithServers > 0 ? "Import & take over" : "Import & hijack";
     public RelayCommand ImportCommand { get; }
     public RelayCommand RestoreCommand { get; }
 }

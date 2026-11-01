@@ -171,6 +171,7 @@ public static class HubrisPaths
     }
 
     public static string ConfigPath => Path.Combine(HomeDir, "config.json");
+    public static string BackupsDir => Path.Combine(HomeDir, "backups");
     public static string CacheDbPath => Path.Combine(HomeDir, "cache", "tools_cache.db");
 
     public static string SocketPath(int pid) => Path.Combine(RuntimeDir, pid.ToString(System.Globalization.CultureInfo.InvariantCulture) + ".sock");
