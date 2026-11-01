@@ -241,7 +241,7 @@
         <!-- ============================================================ configurator -->
         <Panel Grid.Column="1" IsVisible="{Binding ShowConfig}">
         <ScrollViewer DataContext="{Binding Config}" x:DataType="vm:ConfigViewModel" Padding="20,14,20,16">
-            <StackPanel Spacing="12" MaxWidth="880" HorizontalAlignment="Left">
+            <StackPanel Spacing="12">
                 <StackPanel Spacing="3">
                     <TextBlock Classes="h1" Text="Configurator &amp; launcher" />
                     <TextBlock Classes="secondary" FontSize="12" Text="Build the server command line, register it in your MCP clients, or start a local test instance." />
@@ -287,7 +287,7 @@
                             <Button DockPanel.Dock="Right" Command="{Binding ScanClientsCommand}" Content="Scan" />
                             <StackPanel Spacing="2" VerticalAlignment="Center">
                                 <TextBlock Classes="title" Text="Detected client configs" />
-                                <TextBlock Classes="muted" FontSize="11" TextWrapping="Wrap" MaxWidth="700" Text="MCP servers found in Claude Desktop, Claude Code, Cursor, Windsurf and the chosen VS Code workspace. Import turns them into bridges and leaves Hubris as the client's only server (backup kept)." />
+                                <TextBlock Classes="muted" FontSize="11" TextWrapping="Wrap" Text="MCP servers found in Claude Desktop, Claude Code, Cursor, Windsurf and the chosen VS Code workspace. Import turns them into bridges and leaves Hubris as the client's only server (backup kept)." />
                             </StackPanel>
                         </DockPanel>
                         <TextBlock Classes="muted" FontSize="12" Text="No client configs found." IsVisible="{Binding NoClients}" />
