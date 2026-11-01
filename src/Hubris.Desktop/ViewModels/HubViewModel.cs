@@ -3,6 +3,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using Avalonia.Threading;
 using Hubris.Control;
+using Hubris.Engine;
 using Hubris.Desktop.Services;
 
 namespace Hubris.Desktop.ViewModels;
@@ -55,6 +56,9 @@ public sealed class HubViewModel : ObservableObject
     public bool IsCompact { get; }
     public string Version { get; }
     public string Title => string.IsNullOrEmpty(ClientName) ? $"pid {Pid}" : ClientName;
+    /// <summary>The hub process predates this desktop build (started before the client was restarted).</summary>
+    public bool IsOutdated => !string.Equals(Version, HubRuntime.Version, StringComparison.Ordinal);
+    public string OutdatedHint => $"Hub runs Hubris {Version}, this app is {HubRuntime.Version}: restart the MCP client to pick up the new binary.";
     public string Subtitle => $"pid {Pid} · {Fmt.Trim(Cwd, 48)}";
     public string ClientName { get => _clientName; private set { if (Set(ref _clientName, value)) { Raise(nameof(Title)); } } }
     public bool IsConnected { get => _isConnected; private set => Set(ref _isConnected, value); }
@@ -167,7 +171,10 @@ public sealed class HubViewModel : ObservableObject
                 AddEvent(EventRow.FromLog(m));
                 break;
             case ControlTypes.Ack:
-                if (m.Ok == false) AddEvent(EventRow.Error($"command failed: {m.Error}"));
+                if (m.Ok == false)
+                    AddEvent(EventRow.Error(m.Error is { } e && e.StartsWith("unknown command", StringComparison.Ordinal)
+                        ? $"{e} — this hub is an older Hubris build ({Version}); restart the MCP client"
+                        : $"command failed: {m.Error}"));
                 else if (m.Bridges is { Count: > 0 } b) AddEvent(EventRow.Info($"bridges added: {string.Join(", ", b)}"));
                 break;
             case ControlTypes.BridgesChanged:

@@ -25,7 +25,7 @@ public sealed class HubRuntime
     public List<ExternalMcpBridge> Bridges { get; } = new();
     public int BridgeCount => Bridges.Count;
     public int BridgesRunning { get { int n = 0; foreach (var b in Bridges) if (b.IsAlive) n++; return n; } }
-    public const string Version = "1.0.0";
+    public const string Version = "1.1.0";
 }
 
 public sealed class ToolRegistry

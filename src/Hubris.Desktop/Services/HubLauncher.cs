@@ -65,7 +65,7 @@ public sealed class HubLauncher : IDisposable
 
         // Drive the MCP handshake so the hub reports a client name and leaves stdin open.
         p.StandardInput.AutoFlush = true;
-        p.StandardInput.Write("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"Hubris Desktop (test instance)\",\"version\":\"1.0.0\"}}}\n");
+        p.StandardInput.Write("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"Hubris Desktop (test instance)\",\"version\":\"" + Hubris.Engine.HubRuntime.Version + "\"}}}\n");
         p.StandardInput.Write("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n");
 
         lock (_gate) _owned.Add(p);

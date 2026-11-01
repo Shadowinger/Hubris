@@ -47,6 +47,7 @@
                                 <TextBlock Grid.Row="1" Grid.Column="0" Classes="mono muted" FontSize="11" Text="{Binding Subtitle}" TextTrimming="CharacterEllipsis" Margin="0,2,0,0" />
                                 <StackPanel Grid.Row="0" Grid.RowSpan="2" Grid.Column="1" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
                                     <Border Classes="pill indigo" IsVisible="{Binding HasApprovals}"><TextBlock Classes="num" Text="{Binding PendingCount}" /></Border>
+                                    <Border Classes="pill warn" IsVisible="{Binding IsOutdated}" ToolTip.Tip="{Binding OutdatedHint}"><TextBlock Text="old build" /></Border>
                                     <Border Classes="pill" Classes.ok="{Binding IsSafe}" Classes.warn="{Binding IsBypass}"><TextBlock Text="{Binding Mode}" /></Border>
                                 </StackPanel>
                             </Grid>
