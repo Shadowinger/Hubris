@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Hubris.Caching;
 using Hubris.Cli;
+using Hubris.Config;
 using Hubris.Control;
 using Hubris.Engine;
 using Hubris.Protocol;
@@ -79,8 +80,18 @@ registry.Register(new ExecuteToolMetaTool(registry));
 registry.Register(new GitSmartStatusTool(pinned: !opts.Compact));
 registry.Register(new FsReadHeadTool(pinned: !opts.Compact));
 
+// Bridges come from ~/.hubris/config.json; a --bridge on the command line adds to or overrides them by name.
+var bridgeSpecs = new List<BridgeSpec>();
+try { bridgeSpecs.AddRange(HubrisConfigFile.ToSpecs(HubrisConfigFile.Load())); }
+catch (Exception ex) when (ex is System.Text.Json.JsonException or IOException) { Log.Warn($"config {HubrisPaths.ConfigPath} ignored: {ex.Message}"); }
+foreach (var cli in opts.Bridges)
+{
+    bridgeSpecs.RemoveAll(b => b.Name == cli.Name);
+    bridgeSpecs.Add(cli);
+}
+
 var bridges = runtime.Bridges;
-foreach (var spec in opts.Bridges)
+foreach (var spec in bridgeSpecs)
 {
     var bridge = new ExternalMcpBridge(spec.Name, spec.Command, spec.Args, env: spec.Env);
     string hash = ToolCacheStore.ComputeHash(spec.Command, spec.Args, spec.Env?.Keys ?? []);
