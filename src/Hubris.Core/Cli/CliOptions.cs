@@ -3,7 +3,7 @@ using Hubris.Security;
 
 namespace Hubris.Cli;
 
-public sealed record BridgeSpec(string Name, string Command, IReadOnlyList<string> Args);
+public sealed record BridgeSpec(string Name, string Command, IReadOnlyList<string> Args, IReadOnlyDictionary<string, string>? Env = null);
 
 public sealed class CliOptions
 {
@@ -16,6 +16,8 @@ public sealed class CliOptions
     public bool ShowHelp { get; private set; }
     public bool ShowVersion { get; private set; }
     public bool NoControl { get; private set; }
+    public bool NoCache { get; private set; }
+    public double CacheTtlHours { get; private set; } = 24;
     public double ApprovalTimeoutSec { get; private set; } = 120;
     public List<BridgeSpec> Bridges { get; } = new();
 
@@ -27,6 +29,8 @@ public sealed class CliOptions
         if (Compact) list.Add("--compact");
         if (Verbose) list.Add("--verbose");
         if (NoControl) list.Add("--no-control");
+        if (NoCache) list.Add("--no-cache");
+        if (CacheTtlHours != 24) list.Add($"--cache-ttl={CacheTtlHours.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
         if (ApprovalTimeoutSec != 120) list.Add($"--approval-timeout={ApprovalTimeoutSec.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
         foreach (var b in Bridges)
         {
@@ -52,6 +56,7 @@ public sealed class CliOptions
                 case "--install-vscode": options.InstallVsCode = true; continue;
                 case "--install-claude": options.InstallClaude = true; continue;
                 case "--no-control": options.NoControl = true; continue;
+                case "--no-cache": options.NoCache = true; continue;
                 case "--help" or "-h": options.ShowHelp = true; continue;
                 case "--version": options.ShowVersion = true; continue;
             }
@@ -66,6 +71,14 @@ public sealed class CliOptions
             {
                 if (i + 1 >= args.Length || !ModeNames.TryParseMode(args[i + 1], out var mode)) { error = "--mode requires safe|bypass"; return false; }
                 options.Mode = mode; i++;
+                continue;
+            }
+
+            if (a.StartsWith("--cache-ttl=", StringComparison.Ordinal))
+            {
+                if (!double.TryParse(a[12..], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var hours) || hours <= 0 || hours > 24 * 365)
+                { error = "--cache-ttl must be hours in (0, 8760]"; return false; }
+                options.CacheTtlHours = hours;
                 continue;
             }
 
@@ -111,7 +124,7 @@ public sealed class CliOptions
     private static readonly string[] OwnOptions =
     [
         "--stdio", "--compact", "--verbose", "-v", "--install-vscode", "--install-claude", "--help", "-h",
-        "--version", "--no-control", "--mode", "--bridge", "--approval-timeout",
+        "--version", "--no-control", "--no-cache", "--cache-ttl", "--mode", "--bridge", "--approval-timeout",
     ];
 
     public static bool IsOwnOption(string arg)
@@ -138,6 +151,8 @@ public sealed class CliOptions
             "  --bridge=n:cmd     spawn an external stdio MCP server; its tools appear as n__<tool>\n" +
             "  --verbose          debug logging on stderr\n" +
             "  --no-control       do not open the local control socket (no desktop UI, no approvals)\n" +
+            "  --no-cache         always spawn bridges at startup instead of using the SQLite tool cache\n" +
+            "  --cache-ttl=H      hours a cached bridge tool list stays valid (default 24)\n" +
             "  --approval-timeout=S  seconds a blocked call waits for Approve/Deny in the UI (default 120)\n" +
             "  --install-vscode   write .vscode/mcp.json in the current directory\n" +
             "  --install-claude   register in Claude Desktop's claude_desktop_config.json\n" +

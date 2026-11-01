@@ -15,5 +15,5 @@ bin="src/Hubris/bin/Release/net10.0/${rid}/publish/Hubris"
 [ -x "$bin" ] || bin=$(ls src/Hubris/bin/Release/net10.0/*/publish/Hubris | head -1)
 
 echo "== e2e ($bin)"
-export HUBRIS_RUNTIME_DIR="${HUBRIS_RUNTIME_DIR:-$(mktemp -d)/run}"
+export HUBRIS_HOME="${HUBRIS_HOME:-$(mktemp -d)}"
 python3 -I tests/e2e/control_test.py "$bin"

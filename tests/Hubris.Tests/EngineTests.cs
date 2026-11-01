@@ -29,53 +29,64 @@ internal sealed class FakeTool : IMcpTool
     }
 }
 
-public class FastLruCacheTests
+public class ToolCacheStoreTests : IDisposable
 {
-    [Fact]
-    public void Hit_requires_identical_arguments()
+    private readonly string _dir = Directory.CreateTempSubdirectory("hubris-cache-").FullName;
+    private ToolCacheStore Open(TimeSpan? ttl = null)
     {
-        var cache = new FastLruCache(capacity: 8);
-        var a = FastLruCache.ComputeKey("t", new JsonObject { ["p"] = 1 });
-        var b = FastLruCache.ComputeKey("t", new JsonObject { ["p"] = 2 });
-        cache.Set(in a, CallToolResult.Text("A"));
-        Assert.True(cache.TryGet(in a, out var hit));
-        Assert.Equal("A", hit!.Content[0].Text);
-        Assert.False(cache.TryGet(in b, out _));
-        Assert.Equal(1, cache.Hits);
-        Assert.Equal(1, cache.Misses);
+        var store = new ToolCacheStore(Path.Combine(_dir, "cache", "tools_cache.db"), ttl ?? TimeSpan.FromHours(24));
+        store.Open();
+        return store;
+    }
+    private static List<ToolDefinition> Tools(params string[] names)
+        => names.Select(n => new ToolDefinition { Name = n, Description = "d", InputSchema = new JsonObject { ["type"] = "object" } }).ToList();
+
+    [Fact]
+    public void Hit_requires_same_hash_and_fresh_entry()
+    {
+        using var store = Open();
+        string h = ToolCacheStore.ComputeHash("npx", ["-y", "srv"], ["TOKEN"]);
+        Assert.Null(store.TryGet("fs", h));
+        store.Put("fs", h, Tools("read", "write"), 123);
+        var hit = store.TryGet("fs", h);
+        Assert.NotNull(hit);
+        Assert.Equal(["read", "write"], hit!.Select(t => t.Name));
+        Assert.Null(store.TryGet("fs", ToolCacheStore.ComputeHash("npx", ["-y", "srv", "--extra"], ["TOKEN"])));
+        Assert.Equal(1, store.Hits);
+        Assert.Equal(2, store.Misses);
+        Assert.Equal(1, store.Count);
     }
 
     [Fact]
-    public void Hash_collision_with_different_text_is_a_miss()
+    public void Hash_ignores_env_values_and_key_order()
     {
-        var cache = new FastLruCache(capacity: 8);
-        var real = FastLruCache.ComputeKey("t", null);
-        var forged = new FastLruCache.CacheKey(real.Hash, "something else");
-        cache.Set(in real, CallToolResult.Text("A"));
-        Assert.False(cache.TryGet(in forged, out _));
+        Assert.Equal(ToolCacheStore.ComputeHash("c", ["a"], ["B", "A"]), ToolCacheStore.ComputeHash("c", ["a"], ["A", "B"]));
+        Assert.NotEqual(ToolCacheStore.ComputeHash("c", ["a"], ["A"]), ToolCacheStore.ComputeHash("c", ["a"], ["A", "B"]));
     }
 
     [Fact]
-    public async Task Entries_expire_after_ttl()
+    public void Entries_expire_and_can_be_invalidated()
     {
-        var cache = new FastLruCache(capacity: 8, ttl: TimeSpan.FromMilliseconds(20));
-        var k = FastLruCache.ComputeKey("t", null);
-        cache.Set(in k, CallToolResult.Text("A"));
-        await Task.Delay(60);
-        Assert.False(cache.TryGet(in k, out _));
+        using var expired = Open(TimeSpan.FromSeconds(-1));
+        string h = ToolCacheStore.ComputeHash("c", [], []);
+        expired.Put("x", h, Tools("t"), 1);
+        Assert.Null(expired.TryGet("x", h));
+        using var fresh = Open();
+        Assert.NotNull(fresh.TryGet("x", h));
+        Assert.Equal(1, fresh.Invalidate("x"));
+        Assert.Null(fresh.TryGet("x", h));
     }
 
     [Fact]
-    public void Eviction_keeps_size_bounded()
+    public void Wal_mode_and_maintenance()
     {
-        var cache = new FastLruCache(capacity: 8);
-        for (int i = 0; i < 40; i++)
-        {
-            var k = FastLruCache.ComputeKey("t", new JsonObject { ["i"] = i });
-            cache.Set(in k, CallToolResult.Text(i.ToString()));
-        }
-        Assert.True(cache.Count <= 8, $"count {cache.Count}");
+        using var store = Open();
+        Assert.True(store.MaintainIfDue(TimeSpan.FromDays(7)));
+        Assert.False(store.MaintainIfDue(TimeSpan.FromDays(7)));
+        Assert.True(File.Exists(Path.Combine(_dir, "cache", "tools_cache.db")));
     }
+
+    public void Dispose() { try { Directory.Delete(_dir, true); } catch (IOException) { } }
 }
 
 public class SchemaMinifierTests
@@ -232,6 +243,7 @@ public class CliOptionsTests
     [InlineData("--mode=yolo")]
     [InlineData("--bridge=nocolon")]
     [InlineData("--approval-timeout=0")]
+    [InlineData("--cache-ttl=0")]
     [InlineData("--whatever")]
     public void Invalid_options_are_rejected(string arg)
     {

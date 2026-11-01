@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Hubris.Caching;
 using Hubris.Control;
 using Hubris.Protocol;
 using Hubris.Security;
@@ -16,7 +15,6 @@ public sealed class McpRouter
     private readonly StdioTransport _transport;
     private readonly ToolRegistry _registry;
     private readonly SecurityInterceptor _security;
-    private readonly FastLruCache _cache;
     private readonly HubRuntime _runtime;
     private readonly List<ExternalMcpBridge> _bridges;
     private readonly ControlHub? _control;
@@ -25,12 +23,11 @@ public sealed class McpRouter
     private volatile bool _initialized;
     private long _callSeq;
 
-    public McpRouter(StdioTransport transport, ToolRegistry registry, SecurityInterceptor security, FastLruCache cache, HubRuntime runtime, List<ExternalMcpBridge> bridges, ControlHub? control = null)
+    public McpRouter(StdioTransport transport, ToolRegistry registry, SecurityInterceptor security, HubRuntime runtime, List<ExternalMcpBridge> bridges, ControlHub? control = null)
     {
         _transport = transport;
         _registry = registry;
         _security = security;
-        _cache = cache;
         _runtime = runtime;
         _bridges = bridges;
         _control = control;
@@ -40,7 +37,10 @@ public sealed class McpRouter
             exec.Invoker = (name, args, ct) => InvokeToolAsync(name, args, ct, viaProxy: true);
 
         if (control is not null)
+        {
             control.NotifyToolsChanged = () => _initialized ? SendToolsListChangedAsync() : ValueTask.CompletedTask;
+            control.ReplaceBridgeTools = ReplaceBridgeToolsAsync;
+        }
     }
 
     public bool Initialized => _initialized;
@@ -253,20 +253,6 @@ public sealed class McpRouter
             }
         }
 
-        // Local tools answer in microseconds and read live state (git, files): caching them only serves stale data.
-        bool cacheable = bridged && tool.RiskLevel == ToolRiskLevel.ReadOnly && outcome == "ok";
-        FastLruCache.CacheKey key = default;
-        if (cacheable)
-        {
-            key = FastLruCache.ComputeKey(tool.Name, args);
-            if (_cache.TryGet(in key, out var cached) && cached is not null)
-            {
-                Log.Debug($"cache hit {tool.Name}");
-                _control?.EmitToolCall(callId, tool.Name, tool.RiskLevel, "cached", 0, args, cached);
-                return cached;
-            }
-        }
-
         CallToolResult result;
         long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         try
@@ -287,9 +273,6 @@ public sealed class McpRouter
         Log.Debug($"{tool.Name} {(result.Failed ? "error" : "ok")} {ms:0.0}ms{(viaProxy ? " (via proxy)" : "")}");
 
         result = DlpSanitizer.Sanitize(result);
-
-        if (cacheable && !result.Failed)
-            _cache.Set(in key, result);
 
         if (result.Failed && outcome == "ok") outcome = "error";
         _control?.EmitToolCall(callId, tool.Name, tool.RiskLevel, outcome, ms, args, result);
@@ -336,6 +319,7 @@ public sealed class McpRouter
         _ = Task.Run(() => ReplaceBridgeToolsAsync(bridge, []), CancellationToken.None);
     }
 
+    /// <summary>Also used by the control hub after Clear cache re-lists a bridge.</summary>
     private async Task ReplaceBridgeToolsAsync(ExternalMcpBridge bridge, List<ToolDefinition> tools)
     {
         _registry.UnregisterWhere(t => t is BridgedTool bt && string.Equals(bt.BridgeName, bridge.Name, StringComparison.Ordinal));

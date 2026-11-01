@@ -33,6 +33,7 @@ public sealed class ControlMessage
     [JsonPropertyName("dlpRedactions")] public long? DlpRedactions { get; set; }
     [JsonPropertyName("toolCount")] public int? ToolCount { get; set; }
     [JsonPropertyName("bridgeCount")] public int? BridgeCount { get; set; }
+    [JsonPropertyName("bridgesRunning")] public int? BridgesRunning { get; set; }
     [JsonPropertyName("pendingApprovals")] public int? PendingApprovals { get; set; }
     [JsonPropertyName("activeTools")] public int? ActiveTools { get; set; }
     [JsonPropertyName("activeTokens")] public int? ActiveTokens { get; set; }
@@ -128,17 +129,30 @@ public sealed partial class ControlJsonContext : JsonSerializerContext
 /// <summary>Well-known locations shared by the hub and the desktop UI.</summary>
 public static class HubrisPaths
 {
+    /// <summary>~/.hubris, or HUBRIS_HOME (tests point it at a temp dir).</summary>
+    public static string HomeDir
+    {
+        get
+        {
+            string? env = Environment.GetEnvironmentVariable("HUBRIS_HOME");
+            if (!string.IsNullOrEmpty(env)) return env;
+            string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            if (string.IsNullOrEmpty(home)) home = Path.GetTempPath();
+            return Path.Combine(home, ".hubris");
+        }
+    }
+
     public static string RuntimeDir
     {
         get
         {
             string? env = Environment.GetEnvironmentVariable("HUBRIS_RUNTIME_DIR");
-            if (!string.IsNullOrEmpty(env)) return env;
-            string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            if (string.IsNullOrEmpty(home)) home = Path.GetTempPath();
-            return Path.Combine(home, ".hubris", "run");
+            return !string.IsNullOrEmpty(env) ? env : Path.Combine(HomeDir, "run");
         }
     }
+
+    public static string ConfigPath => Path.Combine(HomeDir, "config.json");
+    public static string CacheDbPath => Path.Combine(HomeDir, "cache", "tools_cache.db");
 
     public static string SocketPath(int pid) => Path.Combine(RuntimeDir, pid.ToString(System.Globalization.CultureInfo.InvariantCulture) + ".sock");
     public static string DescriptorPath(int pid) => Path.Combine(RuntimeDir, pid.ToString(System.Globalization.CultureInfo.InvariantCulture) + ".json");

@@ -19,10 +19,12 @@ public sealed class HubRuntime
     public ExecutionMode Mode => Security.Mode;
     public ControlHub? Control { get; set; }
     public required bool CompactContext { get; init; }
-    public required FastLruCache Cache { get; init; }
     public required SecurityInterceptor Security { get; init; }
     public ToolRegistry Registry { get; set; } = null!;
-    public int BridgeCount { get; set; }
+    public ToolCacheStore? ToolCache { get; init; }
+    public List<ExternalMcpBridge> Bridges { get; } = new();
+    public int BridgeCount => Bridges.Count;
+    public int BridgesRunning { get { int n = 0; foreach (var b in Bridges) if (b.IsAlive) n++; return n; } }
     public const string Version = "1.0.0";
 }
 

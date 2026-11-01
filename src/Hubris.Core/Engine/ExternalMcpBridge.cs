@@ -38,15 +38,23 @@ public sealed class ExternalMcpBridge : IAsyncDisposable
     private long _nextId;
     private int _disposed;
 
-    public ExternalMcpBridge(string name, string command, IReadOnlyList<string> args, string? cwd = null)
+    private readonly SemaphoreSlim _startLock = new(1, 1);
+
+    public ExternalMcpBridge(string name, string command, IReadOnlyList<string> args, string? cwd = null, IReadOnlyDictionary<string, string>? env = null)
     {
         Name = name;
         _command = command;
         _args = args;
         _cwd = cwd;
+        Env = env ?? new Dictionary<string, string>();
     }
 
     public string Name { get; }
+    public string Command => _command;
+    public IReadOnlyList<string> Args => _args;
+    public IReadOnlyDictionary<string, string> Env { get; }
+    /// <summary>False for a bridge registered from the tool cache whose process has not been needed yet.</summary>
+    public bool IsStarted => _process is not null;
     public bool IsAlive => _process is { HasExited: false };
     public int? ExitCode => _process is { HasExited: true } p ? p.ExitCode : null;
     public Implementation? ServerInfo { get; private set; }
@@ -58,7 +66,31 @@ public sealed class ExternalMcpBridge : IAsyncDisposable
 
     // ------------------------------------------------------------------ lifecycle
 
+    /// <summary>Spawns the child, completes the MCP handshake and lists its tools.</summary>
     public async Task<List<ToolDefinition>> StartAsync(CancellationToken ct)
+    {
+        await EnsureStartedAsync(ct).ConfigureAwait(false);
+        return await ListToolsAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Starts the child on first use; concurrent callers wait for the same start. No-op once started.</summary>
+    public async Task EnsureStartedAsync(CancellationToken ct)
+    {
+        if (_process is not null) return;
+        await _startLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (_process is not null) return;
+            if (Volatile.Read(ref _disposed) == 1) throw new McpBridgeException(JsonRpcErrorCodes.InternalError, $"bridge '{Name}' disposed");
+            await StartProcessAsync(ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _startLock.Release();
+        }
+    }
+
+    private async Task StartProcessAsync(CancellationToken ct)
     {
         var psi = new ProcessStartInfo(_command)
         {
@@ -72,6 +104,7 @@ public sealed class ExternalMcpBridge : IAsyncDisposable
             StandardInputEncoding = new UTF8Encoding(false),
         };
         foreach (var a in _args) psi.ArgumentList.Add(a);
+        foreach (var kv in Env) psi.Environment[kv.Key] = kv.Value;
         if (!string.IsNullOrEmpty(_cwd)) psi.WorkingDirectory = _cwd;
 
         var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
@@ -105,7 +138,6 @@ public sealed class ExternalMcpBridge : IAsyncDisposable
         }
 
         await SendNotificationAsync("notifications/initialized", null, ct).ConfigureAwait(false);
-        return await ListToolsAsync(ct).ConfigureAwait(false);
     }
 
     public async Task<List<ToolDefinition>> ListToolsAsync(CancellationToken ct)
@@ -128,6 +160,10 @@ public sealed class ExternalMcpBridge : IAsyncDisposable
 
     public async Task<CallToolResult> CallToolAsync(string remoteName, JsonObject? arguments, CancellationToken ct)
     {
+        try { await EnsureStartedAsync(ct).ConfigureAwait(false); }
+        catch (McpBridgeException ex) { return CallToolResult.Error($"Bridge '{Name}' could not start: {ex.Message}"); }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or TimeoutException or InvalidOperationException)
+        { return CallToolResult.Error($"Bridge '{Name}' could not start: {ex.Message}"); }
         var p = new JsonObject { ["name"] = remoteName };
         if (arguments is not null) p["arguments"] = arguments.DeepClone();
         try
@@ -403,6 +439,7 @@ public sealed class ExternalMcpBridge : IAsyncDisposable
         if (_errLoop is not null) { try { await _errLoop.ConfigureAwait(false); } catch (Exception ex) { Log.Debug($"bridge '{Name}' err loop: {ex.Message}"); } }
 
         process?.Dispose();
+        _startLock.Dispose();
         _lifetime.Dispose();
         Log.Info($"bridge '{Name}' stopped");
     }

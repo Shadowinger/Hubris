@@ -46,14 +46,29 @@ using var sigHup = OperatingSystem.IsWindows() ? null : PosixSignalRegistration.
 // Ctrl+C arrives as SIGINT and is covered above; Console.CancelKeyPress is deliberately not used because
 // subscribing to it initialises the terminal layer (terminfo) which costs startup time and is meaningless on a pipe.
 
-var cache = new FastLruCache(capacity: 256, ttl: TimeSpan.FromSeconds(10)); // bridged read-only tools only
+ToolCacheStore? toolCache = null;
+if (!opts.NoCache)
+{
+    try
+    {
+        toolCache = new ToolCacheStore(HubrisPaths.CacheDbPath, TimeSpan.FromHours(opts.CacheTtlHours));
+        toolCache.Open();
+        toolCache.MaintainIfDue(TimeSpan.FromDays(7));
+    }
+    catch (Exception ex)
+    {
+        Log.Warn($"tool cache disabled: {ex.Message}");
+        toolCache?.Dispose();
+        toolCache = null;
+    }
+}
 var security = new SecurityInterceptor(opts.Mode);
 var registry = new ToolRegistry(opts.Compact);
 var runtime = new HubRuntime
 {
     Uptime = uptime,
     CompactContext = opts.Compact,
-    Cache = cache,
+    ToolCache = toolCache,
     Security = security,
     Registry = registry,
 };
@@ -64,16 +79,34 @@ registry.Register(new ExecuteToolMetaTool(registry));
 registry.Register(new GitSmartStatusTool(pinned: !opts.Compact));
 registry.Register(new FsReadHeadTool(pinned: !opts.Compact));
 
-var bridges = new List<ExternalMcpBridge>(opts.Bridges.Count);
+var bridges = runtime.Bridges;
 foreach (var spec in opts.Bridges)
 {
-    var bridge = new ExternalMcpBridge(spec.Name, spec.Command, spec.Args);
+    var bridge = new ExternalMcpBridge(spec.Name, spec.Command, spec.Args, env: spec.Env);
+    string hash = ToolCacheStore.ComputeHash(spec.Command, spec.Args, spec.Env?.Keys ?? []);
+
+    // Cache hit: tools are listed from SQLite and the child is spawned only when one of them is called.
+    var cachedTools = toolCache?.TryGet(spec.Name, hash);
+    if (cachedTools is not null)
+    {
+        foreach (var def in cachedTools) registry.Register(new BridgedTool(bridge, def));
+        bridges.Add(bridge);
+        Log.Info($"bridge '{spec.Name}' exposes {cachedTools.Count} tool(s) from cache; process not started");
+        continue;
+    }
+
     try
     {
         var tools = await bridge.StartAsync(shutdown.Token);
         foreach (var def in tools) registry.Register(new BridgedTool(bridge, def));
         bridges.Add(bridge);
         Log.Info($"bridge '{spec.Name}' exposes {tools.Count} tool(s)" + (bridge.ServerInfo is { } si ? $" ({si.Name} {si.Version})" : string.Empty));
+        if (toolCache is not null)
+        {
+            int tokens = 0;
+            foreach (var def in tools) tokens += ToolRegistry.EstimateTokens(new BridgedTool(bridge, def));
+            toolCache.Put(spec.Name, hash, tools, tokens);
+        }
     }
     catch (Exception ex)
     {
@@ -81,12 +114,11 @@ foreach (var spec in opts.Bridges)
         await bridge.DisposeAsync();
     }
 }
-runtime.BridgeCount = bridges.Count;
 
 ControlHub? control = null;
 if (!opts.NoControl)
 {
-    control = new ControlHub(runtime, registry, security, cache, TimeSpan.FromSeconds(opts.ApprovalTimeoutSec));
+    control = new ControlHub(runtime, registry, security, TimeSpan.FromSeconds(opts.ApprovalTimeoutSec));
     control.RequestShutdown = () => RequestShutdown("control channel");
     try
     {
@@ -102,7 +134,7 @@ if (!opts.NoControl)
 }
 
 var transport = new StdioTransport();
-var router = new McpRouter(transport, registry, security, cache, runtime, bridges, control);
+var router = new McpRouter(transport, registry, security, runtime, bridges, control);
 
 Log.Info($"ready mode={ModeNames.ToText(opts.Mode)} compact={(opts.Compact ? "on" : "off")} tools={registry.Count} bridges={bridges.Count} startup={uptime.Elapsed.TotalMilliseconds:0.0}ms");
 
@@ -128,6 +160,7 @@ RequestShutdown(stdinClosed ? "stdin closed" : "signal");
 await router.ShutdownAsync();
 if (control is not null) await control.DisposeAsync();
 foreach (var b in bridges) await b.DisposeAsync();
+toolCache?.Dispose();
 if (stdinClosed) await transport.DisposeAsync();
 else Log.Debug("stdin read still pending; exiting without draining it");
 Log.Info("bye");

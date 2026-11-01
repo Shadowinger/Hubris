@@ -70,7 +70,7 @@
                         </StackPanel>
                     </Border>
                     <Button Command="{Binding RefreshCommand}" Content="Refresh" />
-                    <Button Command="{Binding ClearCacheCommand}" Content="Clear cache" />
+                    <Button Command="{Binding ClearCacheCommand}" Content="Clear cache" ToolTip.Tip="Drop cached tool lists, start every bridge and list its tools again" />
                     <Button Command="{Binding ShutdownCommand}" Content="Stop hub" />
                 </StackPanel>
                 <StackPanel Spacing="3" VerticalAlignment="Center">
@@ -123,11 +123,11 @@
                                 <Border Grid.Row="0" Grid.Column="0" Classes="cell top"><StackPanel Spacing="3"><TextBlock Classes="section" Text="UPTIME" /><TextBlock Classes="metric" Text="{Binding Uptime}" /></StackPanel></Border>
                                 <Border Grid.Row="0" Grid.Column="1" Classes="cell top"><StackPanel Spacing="3"><TextBlock Classes="section" Text="RSS" /><TextBlock Classes="metric" Text="{Binding Rss}" /></StackPanel></Border>
                                 <Border Grid.Row="0" Grid.Column="2" Classes="cell top"><StackPanel Spacing="3"><TextBlock Classes="section" Text="HEAP" /><TextBlock Classes="metric" Text="{Binding Heap}" /></StackPanel></Border>
-                                <Border Grid.Row="0" Grid.Column="3" Classes="cell top"><StackPanel Spacing="3"><TextBlock Classes="section" Text="CACHE" /><StackPanel Orientation="Horizontal" Spacing="6"><TextBlock Classes="metric" Text="{Binding Cache}" /><TextBlock Classes="muted num" FontSize="11" VerticalAlignment="Bottom" Margin="0,0,0,2" Text="{Binding CacheFill}" /></StackPanel></StackPanel></Border>
+                                <Border Grid.Row="0" Grid.Column="3" Classes="cell top"><StackPanel Spacing="3"><TextBlock Classes="section" Text="TOOL CACHE" /><TextBlock Classes="metric" Text="{Binding Cache}" /><TextBlock Classes="muted num" FontSize="10" Text="{Binding CacheFill}" /></StackPanel></Border>
                                 <Border Grid.Row="0" Grid.Column="4" Classes="cell top last"><StackPanel Spacing="3"><TextBlock Classes="section" Text="BLOCKED" /><TextBlock Classes="metric" Text="{Binding Blocked}" Foreground="#F87171" /></StackPanel></Border>
                                 <Border Grid.Row="1" Grid.Column="0" Classes="cell"><StackPanel Spacing="3"><TextBlock Classes="section" Text="DLP REDACTIONS" /><TextBlock Classes="metric" Text="{Binding Dlp}" /></StackPanel></Border>
                                 <Border Grid.Row="1" Grid.Column="1" Classes="cell"><StackPanel Spacing="3"><TextBlock Classes="section" Text="TOOLS" /><TextBlock Classes="metric" Text="{Binding ToolCount}" /></StackPanel></Border>
-                                <Border Grid.Row="1" Grid.Column="2" Classes="cell"><StackPanel Spacing="3"><TextBlock Classes="section" Text="BRIDGES" /><TextBlock Classes="metric" Text="{Binding BridgeCount}" /></StackPanel></Border>
+                                <Border Grid.Row="1" Grid.Column="2" Classes="cell"><StackPanel Spacing="3"><TextBlock Classes="section" Text="BRIDGES" /><TextBlock Classes="metric" Text="{Binding BridgesText}" /></StackPanel></Border>
                                 <Border Grid.Row="1" Grid.Column="3" Classes="cell"><StackPanel Spacing="3"><TextBlock Classes="section" Text="UI CLIENTS" /><TextBlock Classes="metric" Text="{Binding Clients}" /></StackPanel></Border>
                                 <Border Grid.Row="1" Grid.Column="4" Classes="cell last">
                                     <StackPanel Spacing="3">

@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.IO.Pipelines;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Hubris.Caching;
 using Hubris.Engine;
 using Hubris.Protocol;
 using Hubris.Security;
@@ -30,8 +29,7 @@ internal sealed class HubHarness : IAsyncDisposable
     {
         Registry = new ToolRegistry(compact);
         var security = new SecurityInterceptor(ExecutionMode.Safe);
-        var cache = new FastLruCache();
-        var runtime = new HubRuntime { Uptime = Stopwatch.StartNew(), CompactContext = compact, Cache = cache, Security = security, Registry = Registry };
+        var runtime = new HubRuntime { Uptime = Stopwatch.StartNew(), CompactContext = compact, Security = security, Registry = Registry };
         Registry.Register(new HubStatusTool(runtime));
         Registry.Register(new SearchToolsMetaTool(Registry));
         Registry.Register(new ExecuteToolMetaTool(Registry));
@@ -39,7 +37,7 @@ internal sealed class HubHarness : IAsyncDisposable
         Registry.Register(Hidden);
 
         var transport = new StdioTransport(_toHub.Reader.AsStream(), _fromHub.Writer.AsStream());
-        var router = new McpRouter(transport, Registry, security, cache, runtime, new List<ExternalMcpBridge>());
+        var router = new McpRouter(transport, Registry, security, runtime, new List<ExternalMcpBridge>());
         _loop = transport.RunReadLoopAsync(router.HandleAsync, _cts.Token);
         _in = new StreamWriter(_toHub.Writer.AsStream()) { AutoFlush = true, NewLine = "\n" };
         _out = new StreamReader(_fromHub.Reader.AsStream());
@@ -169,7 +167,7 @@ public class RouterTests
     }
 
     [Fact]
-    public async Task Local_read_only_tools_are_not_cached()
+    public async Task Repeated_calls_always_execute()
     {
         await using var hub = new HubHarness(compact: false);
         await hub.ToolAsync("hidden_tool", new JsonObject { ["x"] = "same" });

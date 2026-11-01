@@ -4,7 +4,8 @@ import json, os, socket, subprocess, sys, threading, time, glob
 HERE = os.path.dirname(os.path.abspath(__file__))
 ECHO = os.path.join(HERE, "echo_server.py")
 BIN = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "..", "..", "src", "Hubris", "bin", "Release", "net10.0", "osx-arm64", "publish", "Hubris")
-RUN = os.environ.get("HUBRIS_RUNTIME_DIR") or os.path.expanduser("~/.hubris/run")
+HOME = os.environ.get("HUBRIS_HOME") or os.path.expanduser("~/.hubris")
+RUN = os.environ.get("HUBRIS_RUNTIME_DIR") or os.path.join(HOME, "run")
 os.chdir(os.path.join(HERE, "..", ".."))  # git_smart_status below runs in the repo
 # "--child-flag" proves bridge arguments starting with "--" reach the child instead of being parsed as Hubris options (audit #8)
 hub = subprocess.Popen([BIN, "--stdio", "--compact", "--approval-timeout=5", f"--bridge=py:python3", ECHO, "--child-flag"],
@@ -161,9 +162,11 @@ check(all(t["tokens"] > 0 for t in tools_now), f"every ToolInfo carries a token 
 # --- status + hub_status
 send({"type":"get_status"}); st, _ = recv("status")
 check(st["activeTools"] == 4 and 0 < st["activeTokens"] < st["totalTokens"], f"status context meter: {st['activeTools']}/{st['toolCount']} tools ~{st['activeTokens']}/{st['totalTokens']} tok")
-check(st["clients"] == 1 and st["blocked"] >= 3 and st["toolCount"] == 8, f"status: clients={st['clients']} blocked={st['blocked']} tools={st['toolCount']}")
+check(st["clients"] == 1 and st["blocked"] >= 3 and st["toolCount"] == 8 and st["cacheMisses"] == 1 and st["bridgesRunning"] == 1, f"status: clients={st['clients']} blocked={st['blocked']} tools={st['toolCount']} cacheMisses={st['cacheMisses']}")
 res, _ = rpc({"jsonrpc":"2.0","id":30,"method":"tools/call","params":{"name":"hub_status"}})
-check("control=1 client(s)" in res["result"]["content"][0]["text"] and "context=4/8 tools" in res["result"]["content"][0]["text"], "hub_status reports control client + context meter")
+text = res["result"]["content"][0]["text"]
+check("control=1 client(s)" in text and "context=4/8 tools" in text, "hub_status reports control client + context meter")
+check("toolcache=hits 0/miss 1 entries 1" in text and "bridges=1 (1 running)" in text, f"first run: tool cache miss, bridge spawned at startup")
 
 # --- audit #7: closing the last UI fails waiting approvals at once
 call_async(40, "py__shell", {"cmd": "rm -rf /tmp/w"})
@@ -192,6 +195,44 @@ time.sleep(0.3)
 check(not os.path.exists(desc_path) and not os.path.exists(desc["socket"]), "descriptor and socket removed at exit")
 orphans = subprocess.run(["pgrep","-f",ECHO], capture_output=True, text=True).stdout.strip()
 check(orphans == "", f"no orphan bridge process ({orphans or 'none'})")
+
+# ===================================================================== second run: cache hit, lazy spawn
+hub2 = subprocess.Popen([BIN, "--stdio", "--compact", "--approval-timeout=5", f"--bridge=py:python3", ECHO, "--child-flag"],
+                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+err2 = []
+threading.Thread(target=lambda: [err2.append(l.rstrip()) for l in hub2.stderr], daemon=True).start()
+def rpc2(obj):
+    hub2.stdin.write(json.dumps(obj) + "\n"); hub2.stdin.flush()
+    while True:
+        m = json.loads(hub2.stdout.readline())
+        if "method" not in m: return m
+rpc2({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","clientInfo":{"name":"ctl-test-2","version":"1"}}})
+hub2.stdin.write(json.dumps({"jsonrpc":"2.0","method":"notifications/initialized"}) + "\n"); hub2.stdin.flush()
+t = rpc2({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"hub_status"}})["result"]["content"][0]["text"]
+check("toolcache=hits 1/miss 0" in t and "bridges=1 (0 running)" in t and "tools=8" in t, "second run: tools listed from cache, bridge process NOT started")
+children = [l for l in subprocess.run(["ps","-ax","-o","command="], capture_output=True, text=True).stdout.splitlines() if "echo_server.py" in l and "--stdio" not in l]
+check(not children, "no echo_server child before the first bridged call")
+r = rpc2({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"mcp_execute_tool","arguments":{"toolName":"py__peek","arguments":{"what":"lazy"}}}})
+check(r["result"]["content"][0]["text"].startswith("echo:peek"), "first bridged call spawned the child and answered")
+t = rpc2({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"hub_status"}})["result"]["content"][0]["text"]
+check("bridges=1 (1 running)" in t, "bridge running after the lazy start")
+# clear_cache over the control socket: entries dropped and rebuilt, tools still present
+d2 = os.path.join(RUN, f"{hub2.pid}.json")
+desc2 = json.load(open(d2))
+s2 = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); s2.connect(desc2["socket"]); f2 = s2.makefile("r")
+def recv2(t_):
+    while True:
+        m = json.loads(f2.readline())
+        if m["type"] == t_: return m
+recv2("hello")
+s2.sendall((json.dumps({"type":"clear_cache","reqId":1}) + "\n").encode()); ack2 = recv2("ack")
+st2 = None
+s2.sendall((json.dumps({"type":"get_status","reqId":2}) + "\n").encode()); st2 = recv2("status")
+check(ack2["ok"] and st2["cacheSize"] == 1 and st2["bridgesRunning"] == 1, f"clear_cache re-listed and re-cached the bridge (entries={st2['cacheSize']})")
+lst2 = rpc2({"jsonrpc":"2.0","id":5,"method":"tools/list"})
+f2.close(); s2.close()
+hub2.stdin.close(); hub2.wait(timeout=30)
+check(hub2.returncode == 0, "second hub exited cleanly on EOF")
 
 print("\n--- hub stderr (tail):"); print("\n".join(stderr_lines[-14:]))
 sys.exit(0 if ok else 1)

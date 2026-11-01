@@ -22,7 +22,7 @@ public sealed class HubViewModel : ObservableObject
     private string _heap = "–";
     private string _cache = "–";
     private long _blocked, _dlp;
-    private int _toolCount, _bridgeCount, _clients, _cacheSize, _cacheCapacity;
+    private int _toolCount, _bridgeCount, _bridgesRunning, _clients, _cacheSize, _cacheCapacity;
     private string _toolFilter = "";
     private EventRow? _selectedEvent;
     private int _activeTools, _activeTokens, _totalTokens;
@@ -82,9 +82,11 @@ public sealed class HubViewModel : ObservableObject
     public long Blocked { get => _blocked; private set => Set(ref _blocked, value); }
     public long Dlp { get => _dlp; private set => Set(ref _dlp, value); }
     public int ToolCount { get => _toolCount; private set => Set(ref _toolCount, value); }
-    public int BridgeCount { get => _bridgeCount; private set => Set(ref _bridgeCount, value); }
+    public int BridgeCount { get => _bridgeCount; private set { if (Set(ref _bridgeCount, value)) Raise(nameof(BridgesText)); } }
+    public int BridgesRunning { get => _bridgesRunning; private set { if (Set(ref _bridgesRunning, value)) Raise(nameof(BridgesText)); } }
+    public string BridgesText => _bridgeCount == 0 ? "0" : $"{_bridgeCount} · {_bridgesRunning} running";
     public int Clients { get => _clients; private set => Set(ref _clients, value); }
-    public string CacheFill => $"{_cacheSize}/{_cacheCapacity}";
+    public string CacheFill => $"{_cacheSize} cached · {_cacheCapacity} bridges";
 
     // ---------------------------------------------------------------- context meter
     public int ActiveTools => _activeTools;
@@ -193,6 +195,7 @@ public sealed class HubViewModel : ObservableObject
         Dlp = m.DlpRedactions ?? 0;
         ToolCount = m.ToolCount ?? 0;
         BridgeCount = m.BridgeCount ?? 0;
+        BridgesRunning = m.BridgesRunning ?? 0;
         Clients = m.Clients ?? 0;
         ApplyContext(m.ActiveTools, m.ActiveTokens, m.TotalTokens);
     }
