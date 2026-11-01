@@ -1,6 +1,6 @@
 using System.Buffers;
 
-namespace McpHub.Transport;
+namespace Hubris.Transport;
 
 /// <summary>Newline-delimited framing over a <see cref="ReadOnlySequence{T}"/> without copying.</summary>
 public static class LineFramer

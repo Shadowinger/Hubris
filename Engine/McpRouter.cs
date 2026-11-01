@@ -1,13 +1,13 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using McpHub.Caching;
-using McpHub.Protocol;
-using McpHub.Security;
-using McpHub.Tools;
-using McpHub.Transport;
+using Hubris.Caching;
+using Hubris.Protocol;
+using Hubris.Security;
+using Hubris.Tools;
+using Hubris.Transport;
 
-namespace McpHub.Engine;
+namespace Hubris.Engine;
 
 /// <summary>Dispatches JSON-RPC methods; one Task per request so slow tools never block ping.</summary>
 public sealed class McpRouter
@@ -155,8 +155,8 @@ public sealed class McpRouter
 
         string modeText = ModeNames.ToText(_runtime.Mode);
         string instructions = _runtime.Mode == ExecutionMode.Safe
-            ? $"McpHub runs in {modeText} mode: read-only tools execute immediately; mutating tools are scanned for destructive patterns and destructive tools are blocked. A blocked call returns isError=true with a [SAFE MODE BLOCKED] message – ask the user to confirm or to restart McpHub with --mode=bypass."
-            : $"McpHub runs in {modeText} mode: all tool calls execute without policy checks.";
+            ? $"Hubris runs in {modeText} mode: read-only tools execute immediately; mutating tools are scanned for destructive patterns and destructive tools are blocked. A blocked call returns isError=true with a [SAFE MODE BLOCKED] message – ask the user to confirm or to restart Hubris with --mode=bypass."
+            : $"Hubris runs in {modeText} mode: all tool calls execute without policy checks.";
         if (_runtime.CompactContext)
             instructions += $" Compact context is enabled: only core tools are listed. Call {SearchToolsMetaTool.ToolName} with keywords to discover and unlock additional tools.";
 
@@ -164,7 +164,7 @@ public sealed class McpRouter
         {
             ProtocolVersion = version,
             Capabilities = new ServerCapabilities { Tools = new ToolsCapability { ListChanged = true } },
-            ServerInfo = new Implementation { Name = "McpHub", Version = HubRuntime.Version },
+            ServerInfo = new Implementation { Name = "Hubris", Version = HubRuntime.Version },
             Instructions = instructions,
         };
         await _transport.SendResultAsync(msg.Id, result, McpJsonContext.Default.InitializeResult, ct).ConfigureAwait(false);

@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace McpHub.Protocol;
+namespace Hubris.Protocol;
 
 public enum RpcIdKind : byte
 {

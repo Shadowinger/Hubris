@@ -1,7 +1,7 @@
 using System.Text.RegularExpressions;
-using McpHub.Protocol;
+using Hubris.Protocol;
 
-namespace McpHub.Security;
+namespace Hubris.Security;
 
 /// <summary>Masks secrets and personal identifiers in tool output before it reaches the model.</summary>
 public static partial class DlpSanitizer

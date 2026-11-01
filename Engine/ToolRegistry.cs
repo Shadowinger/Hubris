@@ -1,13 +1,13 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json.Nodes;
-using McpHub.Caching;
-using McpHub.Protocol;
-using McpHub.Security;
-using McpHub.Tools;
-using McpHub.Transport;
+using Hubris.Caching;
+using Hubris.Protocol;
+using Hubris.Security;
+using Hubris.Tools;
+using Hubris.Transport;
 
-namespace McpHub.Engine;
+namespace Hubris.Engine;
 
 /// <summary>Shared process-wide state handed to tools by constructor (pure DI).</summary>
 public sealed class HubRuntime

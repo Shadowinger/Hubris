@@ -5,12 +5,12 @@ using System.IO.Pipelines;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using McpHub.Protocol;
-using McpHub.Security;
-using McpHub.Tools;
-using McpHub.Transport;
+using Hubris.Protocol;
+using Hubris.Security;
+using Hubris.Tools;
+using Hubris.Transport;
 
-namespace McpHub.Engine;
+namespace Hubris.Engine;
 
 public sealed class McpBridgeException : Exception
 {
@@ -92,7 +92,7 @@ public sealed class ExternalMcpBridge : IAsyncDisposable
         {
             ["protocolVersion"] = McpProtocol.Latest,
             ["capabilities"] = new JsonObject(),
-            ["clientInfo"] = new JsonObject { ["name"] = "McpHub", ["version"] = HubRuntime.Version },
+            ["clientInfo"] = new JsonObject { ["name"] = "Hubris", ["version"] = HubRuntime.Version },
         };
 
         JsonNode? initResult = await SendRequestAsync("initialize", initParams, ct, TimeSpan.FromSeconds(30)).ConfigureAwait(false);
@@ -365,7 +365,7 @@ public sealed class ExternalMcpBridge : IAsyncDisposable
             }, CancellationToken.None).ConfigureAwait(false);
             return;
         }
-        await SendErrorAsync(msg.Id, JsonRpcErrorCodes.MethodNotFound, $"McpHub does not support client method '{msg.Method}'").ConfigureAwait(false);
+        await SendErrorAsync(msg.Id, JsonRpcErrorCodes.MethodNotFound, $"Hubris does not support client method '{msg.Method}'").ConfigureAwait(false);
     }
 
     private async Task PumpStderrAsync(StreamReader stderr, CancellationToken ct)

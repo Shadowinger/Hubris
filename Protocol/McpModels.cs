@@ -1,7 +1,7 @@
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
-namespace McpHub.Protocol;
+namespace Hubris.Protocol;
 
 /// <summary>Single wire shape for JSON-RPC requests, responses and notifications.</summary>
 public sealed class JsonRpcMessage

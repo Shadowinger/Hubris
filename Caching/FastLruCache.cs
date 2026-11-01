@@ -3,9 +3,9 @@ using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using McpHub.Protocol;
+using Hubris.Protocol;
 
-namespace McpHub.Caching;
+namespace Hubris.Caching;
 
 /// <summary>
 /// Lock-free-read TTL cache keyed by FNV-1a(tool name + canonical argument JSON).

@@ -3,9 +3,9 @@ using System.IO.Pipelines;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization.Metadata;
-using McpHub.Protocol;
+using Hubris.Protocol;
 
-namespace McpHub.Transport;
+namespace Hubris.Transport;
 
 /// <summary>
 /// Pipelines-based stdio transport. Reads newline-delimited JSON-RPC frames from stdin and writes

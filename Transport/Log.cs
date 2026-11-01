@@ -1,10 +1,10 @@
-namespace McpHub.Transport;
+namespace Hubris.Transport;
 
 /// <summary>All diagnostics go to stderr. stdout is reserved for JSON-RPC frames.</summary>
 public static class Log
 {
     private static readonly object Gate = new();
-    private const string Prefix = "[McpHub] ";
+    private const string Prefix = "[Hubris] ";
 
     public static bool Verbose { get; set; }
 

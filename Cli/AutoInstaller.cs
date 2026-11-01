@@ -1,13 +1,13 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using McpHub.Transport;
+using Hubris.Transport;
 
-namespace McpHub.Cli;
+namespace Hubris.Cli;
 
 /// <summary>Registers this binary in VS Code (.vscode/mcp.json) or Claude Desktop config with a safe merge.</summary>
 public static class AutoInstaller
 {
-    public const string ServerKey = "mcphub";
+    public const string ServerKey = "hubris";
 
     public static int InstallVsCode(string workspaceDir, IReadOnlyList<string> serverArgs)
     {

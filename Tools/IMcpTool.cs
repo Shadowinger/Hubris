@@ -1,8 +1,8 @@
 using System.Text.Json.Nodes;
-using McpHub.Protocol;
-using McpHub.Security;
+using Hubris.Protocol;
+using Hubris.Security;
 
-namespace McpHub.Tools;
+namespace Hubris.Tools;
 
 public interface IMcpTool
 {

@@ -1,8 +1,8 @@
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
-using McpHub.Transport;
+using Hubris.Transport;
 
-namespace McpHub.Security;
+namespace Hubris.Security;
 
 public enum ExecutionMode : byte
 {
@@ -99,7 +99,7 @@ public readonly record struct SecurityVerdict(bool Allowed, string? Reason)
 
 public sealed class SecurityInterceptor
 {
-    public const string BlockedPrefix = "[SAFE MODE BLOCKED] Action requires explicit user confirmation or switching McpHub to Bypass mode.";
+    public const string BlockedPrefix = "[SAFE MODE BLOCKED] Action requires explicit user confirmation or switching Hubris to Bypass mode.";
 
     private long _blocked;
 

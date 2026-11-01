@@ -1,12 +1,12 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using McpHub.Caching;
-using McpHub.Cli;
-using McpHub.Engine;
-using McpHub.Protocol;
-using McpHub.Security;
-using McpHub.Tools;
-using McpHub.Transport;
+using Hubris.Caching;
+using Hubris.Cli;
+using Hubris.Engine;
+using Hubris.Protocol;
+using Hubris.Security;
+using Hubris.Tools;
+using Hubris.Transport;
 
 var uptime = Stopwatch.StartNew();
 
@@ -21,7 +21,7 @@ if (!CliOptions.TryParse(args, out var opts, out string? parseError))
 }
 
 if (opts.ShowHelp) { CliOptions.PrintUsage(); return 0; }
-if (opts.ShowVersion) { Console.Error.WriteLine($"McpHub {HubRuntime.Version}"); return 0; }
+if (opts.ShowVersion) { Console.Error.WriteLine($"Hubris {HubRuntime.Version}"); return 0; }
 Log.Verbose = opts.Verbose;
 
 if (opts.InstallVsCode) return AutoInstaller.InstallVsCode(Environment.CurrentDirectory, opts.ServerArgs());
@@ -204,12 +204,12 @@ public sealed class CliOptions
     public static void PrintUsage()
     {
         Console.Error.WriteLine(
-            "McpHub " + HubRuntime.Version + " – Native AOT MCP multiplexer & security gateway\n" +
+            "Hubris " + HubRuntime.Version + " – Native AOT MCP multiplexer & security gateway\n" +
             "\n" +
-            "usage: McpHub [--stdio] [--mode=safe|bypass] [--compact] [--verbose]\n" +
+            "usage: Hubris [--stdio] [--mode=safe|bypass] [--compact] [--verbose]\n" +
             "              [--bridge=<name>:<command> [arg ...]]...\n" +
-            "       McpHub --install-vscode [server flags]\n" +
-            "       McpHub --install-claude [server flags]\n" +
+            "       Hubris --install-vscode [server flags]\n" +
+            "       Hubris --install-claude [server flags]\n" +
             "\n" +
             "  --stdio            serve MCP over stdin/stdout (default)\n" +
             "  --mode=safe        block destructive tools and dangerous arguments (default)\n" +

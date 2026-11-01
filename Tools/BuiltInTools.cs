@@ -2,12 +2,12 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using McpHub.Engine;
-using McpHub.Protocol;
-using McpHub.Security;
-using McpHub.Transport;
+using Hubris.Engine;
+using Hubris.Protocol;
+using Hubris.Security;
+using Hubris.Transport;
 
-namespace McpHub.Tools;
+namespace Hubris.Tools;
 
 // ============================================================================ ProcessRunner
 
@@ -69,7 +69,7 @@ public sealed class HubStatusTool : IMcpTool
     public HubStatusTool(HubRuntime runtime) => _rt = runtime;
 
     public string Name => "hub_status";
-    public string Description => "McpHub runtime status: RAM footprint, uptime, execution mode (Safe/Bypass), cache hit ratio, registered tool counts.";
+    public string Description => "Hubris runtime status: RAM footprint, uptime, execution mode (Safe/Bypass), cache hit ratio, registered tool counts.";
     public ToolRiskLevel RiskLevel => ToolRiskLevel.ReadOnly;
     public bool Pinned => true;
     public JsonObject InputSchema { get; } = SchemaBuilder.Object();
