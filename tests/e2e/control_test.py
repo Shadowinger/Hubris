@@ -112,6 +112,21 @@ check(not res["result"].get("isError") and res["result"]["content"][0]["text"].s
 ev, _ = recv("tool_call")
 check(ev["outcome"] == "approved", f"tool_call event outcome={ev['outcome']}")
 
+# --- approval: remember the decision (allow-list), then forget it
+call_async(14, "py__shell", {"cmd": "rm -rf /tmp/r1"})
+req, _ = recv("approval_request")
+send({"type":"approve","approvalId":req["approvalId"],"remember":True}); recv("ack"); read_response(14); recv("tool_call")
+# a second identical call must run straight through with NO approval_request (held calls block for 5s before isError)
+t0 = time.time(); call_async(15, "py__shell", {"cmd": "rm -rf /tmp/r1"}); res = read_response(15)
+check(not res["result"].get("isError") and time.time()-t0 < 2, "approve+remember -> next identical call runs without an approval_request")
+check(recv("tool_call")[0]["outcome"] == "approved", "remembered call emits an approved tool_call")
+# forget -> the tool is held for approval again
+send({"type":"forget","tool":"py__shell"}); recv("ack")
+call_async(16, "py__shell", {"cmd": "rm -rf /tmp/r1"})
+req, _ = recv("approval_request")
+check(req["tool"] == "py__shell", "forget -> tool is held for approval again")
+send({"type":"deny","approvalId":req["approvalId"]}); recv("ack"); read_response(16)
+
 # --- approval: timeout (5s)
 t0 = time.time(); call_async(12, "py__nuke", {})
 recv("approval_request")

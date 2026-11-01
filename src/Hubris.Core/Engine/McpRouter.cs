@@ -226,7 +226,21 @@ public sealed class McpRouter
         if (!verdict.Allowed)
         {
             string reason = verdict.Reason ?? SecurityInterceptor.BlockedPrefix;
-            if (_control is { HasClients: true })
+
+            // A remembered session decision short-circuits the gate (Bypass never reaches here: Evaluate returns Ok).
+            bool? remembered = _security.DecisionFor(tool.Name);
+            if (remembered == false)
+            {
+                var denied = CallToolResult.Error($"{reason} Denied for this session.");
+                _control?.EmitToolCall(callId, tool.Name, tool.RiskLevel, "denied", 0, args, denied);
+                return denied;
+            }
+            if (remembered == true)
+            {
+                outcome = "approved";
+                Log.Info($"'{tool.Name}' auto-approved (remembered for this session)");
+            }
+            else if (_control is { HasClients: true })
             {
                 Log.Info($"holding '{tool.Name}' for approval");
                 ApprovalDecision decision = await _control.RequestApprovalAsync(tool.Name, tool.RiskLevel, reason, args, ct).ConfigureAwait(false);

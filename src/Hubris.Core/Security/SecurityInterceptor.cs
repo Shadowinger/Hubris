@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Hubris.Transport;
@@ -104,10 +105,19 @@ public sealed class SecurityInterceptor
     private long _blocked;
     private int _mode;
 
+    /// <summary>Session-scoped "remember this decision" per tool: true = always allow, false = always deny.</summary>
+    private readonly ConcurrentDictionary<string, bool> _decisions = new(StringComparer.Ordinal);
+
     public SecurityInterceptor(ExecutionMode mode)
     {
         _mode = (int)mode;
     }
+
+    /// <summary>null = never decided; true = allow-listed; false = deny-listed for this hub's lifetime.</summary>
+    public bool? DecisionFor(string toolName) => _decisions.TryGetValue(toolName, out var allow) ? allow : null;
+    public void Remember(string toolName, bool allow) => _decisions[toolName] = allow;
+    public bool Forget(string toolName) => _decisions.TryRemove(toolName, out _);
+    public IReadOnlyCollection<KeyValuePair<string, bool>> Decisions => _decisions;
 
     /// <summary>Switchable at runtime from the control channel; reads are lock-free.</summary>
     public ExecutionMode Mode

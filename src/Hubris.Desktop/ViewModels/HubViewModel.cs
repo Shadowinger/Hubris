@@ -150,7 +150,7 @@ public sealed class HubViewModel : ObservableObject
             case ControlTypes.ApprovalRequest:
                 if (m.ApprovalId is not null && !Approvals.Any(a => a.Id == m.ApprovalId))
                 {
-                    var a = new ApprovalViewModel(m, id => _client.ApproveAsync(id), id => _client.DenyAsync(id));
+                    var a = new ApprovalViewModel(m, (id, remember) => _client.ApproveAsync(id, remember), (id, remember) => _client.DenyAsync(id, remember));
                     Approvals.Insert(0, a);
                     AddEvent(EventRow.FromApprovalRequest(m));
                     RaiseApprovals();
@@ -203,7 +203,7 @@ public sealed class HubViewModel : ObservableObject
         int active = 0, activeTok = 0, totalTok = 0;
         foreach (var t in tools)
         {
-            Tools.Add(new ToolRow(t, IsCompact, name => _client.RevealAsync(name), name => _client.LockAsync(name)));
+            Tools.Add(new ToolRow(t, IsCompact, name => _client.RevealAsync(name), name => _client.LockAsync(name), name => _client.ForgetAsync(name)));
             totalTok += t.Tokens;
             if (t.Visible) { active++; activeTok += t.Tokens; }
         }
@@ -244,7 +244,7 @@ public sealed class ApprovalViewModel : ObservableObject
     private string _remaining = "";
     private bool _busy;
 
-    public ApprovalViewModel(ControlMessage m, Func<string, Task> approve, Func<string, Task> deny)
+    public ApprovalViewModel(ControlMessage m, Func<string, bool, Task> approve, Func<string, bool, Task> deny)
     {
         Id = m.ApprovalId ?? "";
         Tool = m.Tool ?? "";
@@ -254,12 +254,14 @@ public sealed class ApprovalViewModel : ObservableObject
         RequestedAt = Fmt.LocalTime(m.Timestamp);
         var requested = DateTime.TryParse(m.Timestamp, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind, out var dt) ? dt.ToUniversalTime() : DateTime.UtcNow;
         _deadline = requested.AddSeconds(m.TimeoutSec ?? 120);
-        ApproveCommand = new AsyncCommand(async () => { Busy = true; await approve(Id); }, () => !_busy);
-        DenyCommand = new AsyncCommand(async () => { Busy = true; await deny(Id); }, () => !_busy);
+        ApproveCommand = new AsyncCommand(async () => { Busy = true; await approve(Id, Remember); }, () => !_busy);
+        DenyCommand = new AsyncCommand(async () => { Busy = true; await deny(Id, Remember); }, () => !_busy);
         Tick();
     }
 
     public string Id { get; }
+    /// <summary>Two-way bound to the "Remember for this session" checkbox; read when Approve/Deny fires.</summary>
+    public bool Remember { get; set; }
     public string Tool { get; }
     public string Risk { get; }
     public bool IsReadOnly => Risk == "ReadOnly";
@@ -355,7 +357,7 @@ public sealed class EventRow
 
 public sealed class ToolRow : ObservableObject
 {
-    public ToolRow(ToolInfo t, bool hubCompact, Func<string, Task> reveal, Func<string, Task> lockTool)
+    public ToolRow(ToolInfo t, bool hubCompact, Func<string, Task> reveal, Func<string, Task> lockTool, Func<string, Task> forget)
     {
         Name = t.Name;
         Description = t.Description;
@@ -365,11 +367,13 @@ public sealed class ToolRow : ObservableObject
         Unlocked = t.Unlocked;
         Tokens = t.Tokens;
         Bridge = t.Bridge ?? "";
+        Decision = t.Decision ?? "";
         // Only compact hubs hide anything, so only there does (un)locking change the client's context.
         CanUnlock = hubCompact && !Visible;
         CanLock = hubCompact && Unlocked && !Pinned;
         RevealCommand = new AsyncCommand(() => reveal(Name), () => CanUnlock);
         LockCommand = new AsyncCommand(() => lockTool(Name), () => CanLock);
+        ForgetCommand = new AsyncCommand(() => forget(Name), () => HasDecision);
     }
 
     public string Name { get; }
@@ -389,6 +393,11 @@ public sealed class ToolRow : ObservableObject
     public bool IsMutating => Risk == "Mutating";
     public bool IsDestructive => Risk == "Destructive";
     public bool StateIndigo => !Pinned && Unlocked;
+    public string Decision { get; }
+    public bool HasDecision => Decision.Length > 0;
+    public bool DecisionAlways => Decision == "always";
+    public bool DecisionNever => Decision == "never";
     public AsyncCommand RevealCommand { get; }
     public AsyncCommand LockCommand { get; }
+    public AsyncCommand ForgetCommand { get; }
 }

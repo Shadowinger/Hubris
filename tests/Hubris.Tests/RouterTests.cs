@@ -23,6 +23,7 @@ internal sealed class HubHarness : IAsyncDisposable
     private int _id;
 
     public ToolRegistry Registry { get; }
+    public SecurityInterceptor Security { get; }
     public FakeTool Mutating { get; } = new("mut", ToolRiskLevel.Mutating);
     public FakeTool Hidden { get; } = new("hidden_tool", ToolRiskLevel.ReadOnly, pinned: false, description: "a hidden helper");
 
@@ -30,6 +31,7 @@ internal sealed class HubHarness : IAsyncDisposable
     {
         Registry = new ToolRegistry(compact);
         var security = new SecurityInterceptor(ExecutionMode.Safe);
+        Security = security;
         var cache = new FastLruCache();
         var runtime = new HubRuntime { Uptime = Stopwatch.StartNew(), CompactContext = compact, Cache = cache, Security = security, Registry = Registry };
         Registry.Register(new HubStatusTool(runtime));
@@ -134,6 +136,38 @@ public class RouterTests
         Assert.StartsWith("[SAFE MODE BLOCKED]", res["content"]![0]!["text"]!.GetValue<string>());
         Assert.Equal(0, hub.Mutating.Calls);
         var ok = await hub.ToolAsync("mut", new JsonObject { ["cmd"] = "ls" });
+        Assert.Null(ok["isError"]);
+        Assert.Equal(1, hub.Mutating.Calls);
+    }
+
+    [Fact]
+    public async Task Remembered_allow_runs_a_blocked_tool_without_a_ui()
+    {
+        await using var hub = new HubHarness();
+        hub.Security.Remember("mut", allow: true);
+        var ok = await hub.ToolAsync("mut", new JsonObject { ["cmd"] = "rm -rf /" });
+        Assert.Null(ok["isError"]);
+        Assert.Equal(1, hub.Mutating.Calls);
+    }
+
+    [Fact]
+    public async Task Remembered_deny_blocks_without_asking()
+    {
+        await using var hub = new HubHarness();
+        hub.Security.Remember("mut", allow: false);
+        var res = await hub.ToolAsync("mut", new JsonObject { ["cmd"] = "rm -rf /" });
+        Assert.True(res["isError"]!.GetValue<bool>());
+        Assert.Contains("denied for this session", res["content"]![0]!["text"]!.GetValue<string>(), StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, hub.Mutating.Calls);
+    }
+
+    [Fact]
+    public async Task Bypass_mode_ignores_remembered_decisions()
+    {
+        await using var hub = new HubHarness();
+        hub.Security.Remember("mut", allow: false); // deny-listed...
+        hub.Security.Mode = ExecutionMode.Bypass;   // ...but Bypass runs everything anyway
+        var ok = await hub.ToolAsync("mut", new JsonObject { ["cmd"] = "rm -rf /" });
         Assert.Null(ok["isError"]);
         Assert.Equal(1, hub.Mutating.Calls);
     }
