@@ -40,6 +40,7 @@ public sealed class ControlMessage
     [JsonPropertyName("totalTokens")] public int? TotalTokens { get; set; }
     [JsonPropertyName("clients")] public int? Clients { get; set; }
     [JsonPropertyName("tools")] public List<ToolInfo>? Tools { get; set; }
+    [JsonPropertyName("bridges")] public List<string>? Bridges { get; set; }
 
     // ---- tool_call
     [JsonPropertyName("id")] public string? Id { get; set; }
@@ -114,6 +115,9 @@ public static class ControlTypes
     public const string Reveal = "reveal";
     public const string Lock = "lock";
     public const string ClearCache = "clear_cache";
+    public const string ReloadConfig = "reload_config";
+    public const string CacheMaintain = "cache_maintain";
+    public const string BridgesChanged = "bridges_changed";
     public const string Shutdown = "shutdown";
 }
 

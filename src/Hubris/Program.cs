@@ -91,40 +91,9 @@ foreach (var cli in opts.Bridges)
 }
 
 var bridges = runtime.Bridges;
+var bridgeHost = new BridgeHost(runtime, registry);
 foreach (var spec in bridgeSpecs)
-{
-    var bridge = new ExternalMcpBridge(spec.Name, spec.Command, spec.Args, env: spec.Env);
-    string hash = ToolCacheStore.ComputeHash(spec.Command, spec.Args, spec.Env?.Keys ?? []);
-
-    // Cache hit: tools are listed from SQLite and the child is spawned only when one of them is called.
-    var cachedTools = toolCache?.TryGet(spec.Name, hash);
-    if (cachedTools is not null)
-    {
-        foreach (var def in cachedTools) registry.Register(new BridgedTool(bridge, def));
-        bridges.Add(bridge);
-        Log.Info($"bridge '{spec.Name}' exposes {cachedTools.Count} tool(s) from cache; process not started");
-        continue;
-    }
-
-    try
-    {
-        var tools = await bridge.StartAsync(shutdown.Token);
-        foreach (var def in tools) registry.Register(new BridgedTool(bridge, def));
-        bridges.Add(bridge);
-        Log.Info($"bridge '{spec.Name}' exposes {tools.Count} tool(s)" + (bridge.ServerInfo is { } si ? $" ({si.Name} {si.Version})" : string.Empty));
-        if (toolCache is not null)
-        {
-            int tokens = 0;
-            foreach (var def in tools) tokens += ToolRegistry.EstimateTokens(new BridgedTool(bridge, def));
-            toolCache.Put(spec.Name, hash, tools, tokens);
-        }
-    }
-    catch (Exception ex)
-    {
-        Log.Warn($"bridge '{spec.Name}' failed to start: {ex.Message}");
-        await bridge.DisposeAsync();
-    }
-}
+    await bridgeHost.AddAsync(spec, shutdown.Token);
 
 ControlHub? control = null;
 if (!opts.NoControl)

@@ -40,6 +40,7 @@ public sealed class McpRouter
         {
             control.NotifyToolsChanged = () => _initialized ? SendToolsListChangedAsync() : ValueTask.CompletedTask;
             control.ReplaceBridgeTools = ReplaceBridgeToolsAsync;
+            control.BridgeAdded = b => { b.ToolsChanged += OnBridgeToolsChanged; b.Exited += OnBridgeExited; };
         }
     }
 

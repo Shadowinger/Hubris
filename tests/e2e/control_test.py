@@ -234,5 +234,43 @@ f2.close(); s2.close()
 hub2.stdin.close(); hub2.wait(timeout=30)
 check(hub2.returncode == 0, "second hub exited cleanly on EOF")
 
+# ===================================================================== third run: no CLI bridge, config.json + reload_config
+cfg_path = os.path.join(HOME, "config.json")
+json.dump({"bridges": []}, open(cfg_path, "w"))
+hub3 = subprocess.Popen([BIN, "--stdio", "--compact"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+threading.Thread(target=lambda: [l for l in hub3.stderr], daemon=True).start()
+def rpc3(obj):
+    hub3.stdin.write(json.dumps(obj) + "\n"); hub3.stdin.flush()
+    notes = []
+    while True:
+        m = json.loads(hub3.stdout.readline())
+        if "method" in m: notes.append(m["method"]); continue
+        return m, notes
+rpc3({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","clientInfo":{"name":"ctl-test-3","version":"1"}}})
+hub3.stdin.write(json.dumps({"jsonrpc":"2.0","method":"notifications/initialized"}) + "\n"); hub3.stdin.flush()
+t, _ = rpc3({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"hub_status"}})
+check("bridges=0" in t["result"]["content"][0]["text"], "third run starts with no bridges")
+json.dump({"bridges": [{"name": "py", "command": "python3", "args": [ECHO, "--child-flag"], "env": {"DEMO_KEY": "1"}}]}, open(cfg_path, "w"))
+d3 = json.load(open(os.path.join(RUN, f"{hub3.pid}.json")))
+s3 = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); s3.connect(d3["socket"]); f3 = s3.makefile("r")
+def recv3(t_):
+    while True:
+        m = json.loads(f3.readline())
+        if m["type"] == t_: return m
+recv3("hello")
+s3.sendall((json.dumps({"type":"reload_config","reqId":1}) + "\n").encode())
+tc3 = recv3("tools_changed"); ack3 = recv3("ack")
+check(ack3["ok"] and ack3.get("bridges") == ["py"] and any(t_["name"] == "py__peek" for t_ in tc3["tools"]), "reload_config added the bridge from config.json and pushed tools_changed")
+lst3, notes3 = rpc3({"jsonrpc":"2.0","id":3,"method":"tools/list"})
+check(not any(t_["name"].startswith("py__") for t_ in lst3["result"]["tools"]) and "notifications/tools/list_changed" in notes3 + [], "compact: new bridge tools are on-demand, list_changed was pushed")
+r3, _ = rpc3({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"mcp_execute_tool","arguments":{"toolName":"py__peek","arguments":{"what":"cfg"}}}})
+check(r3["result"]["content"][0]["text"].startswith("echo:peek"), "bridge from config.json answers")
+s3.sendall((json.dumps({"type":"reload_config","reqId":2}) + "\n").encode()); ack3b = recv3("ack")
+check(ack3b["ok"] and not ack3b.get("bridges"), "second reload adds nothing (idempotent)")
+s3.sendall((json.dumps({"type":"cache_maintain","reqId":3}) + "\n").encode()); ack3c = recv3("ack")
+check(ack3c["ok"], "cache_maintain ran VACUUM/ANALYZE/REINDEX")
+f3.close(); s3.close(); hub3.stdin.close(); hub3.wait(timeout=30)
+check(hub3.returncode == 0, "third hub exited cleanly")
+
 print("\n--- hub stderr (tail):"); print("\n".join(stderr_lines[-14:]))
 sys.exit(0 if ok else 1)

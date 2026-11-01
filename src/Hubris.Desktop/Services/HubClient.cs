@@ -71,6 +71,7 @@ public sealed class HubClient : IAsyncDisposable
     public Task DenyAsync(string approvalId) => SendAsync(new ControlMessage { Type = ControlTypes.Deny, ApprovalId = approvalId });
     public Task RevealAsync(string tool) => SendAsync(new ControlMessage { Type = ControlTypes.Reveal, Tool = tool });
     public Task LockAsync(string tool) => SendAsync(new ControlMessage { Type = ControlTypes.Lock, Tool = tool });
+    public Task ReloadConfigAsync() => SendAsync(new ControlMessage { Type = ControlTypes.ReloadConfig });
     public Task ClearCacheAsync() => SendAsync(new ControlMessage { Type = ControlTypes.ClearCache });
     public Task RequestStatusAsync() => SendAsync(new ControlMessage { Type = ControlTypes.GetStatus });
     public Task RequestToolsAsync() => SendAsync(new ControlMessage { Type = ControlTypes.ListTools });

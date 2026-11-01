@@ -18,6 +18,7 @@ public sealed class ControlHub : IAsyncDisposable
     private readonly HubRuntime _rt;
     private readonly ToolRegistry _registry;
     private readonly SecurityInterceptor _security;
+    private readonly BridgeHost _bridgeHost;
     private readonly TimeSpan _approvalTimeout;
     private readonly CancellationTokenSource _lifetime = new();
     private Task? _statusLoop;
@@ -28,6 +29,7 @@ public sealed class ControlHub : IAsyncDisposable
         _rt = runtime;
         _registry = registry;
         _security = security;
+        _bridgeHost = new BridgeHost(runtime, registry);
         _approvalTimeout = approvalTimeout;
         Approvals = new ApprovalGate();
         Server = new ControlServer(HubrisPaths.SocketPath(Environment.ProcessId), OnCommandAsync, OnConnectedAsync);
@@ -57,6 +59,8 @@ public sealed class ControlHub : IAsyncDisposable
     public Action? RequestShutdown { get; set; }
     /// <summary>Set by the router: swaps a bridge's registered tools and notifies the client.</summary>
     public Func<ExternalMcpBridge, List<ToolDefinition>, Task>? ReplaceBridgeTools { get; set; }
+    /// <summary>Set by the router: a newly added bridge needs its events hooked up.</summary>
+    public Action<ExternalMcpBridge>? BridgeAdded { get; set; }
 
     // ------------------------------------------------------------------ lifecycle
 
@@ -277,6 +281,32 @@ public sealed class ControlHub : IAsyncDisposable
                     await RefreshBridgesAsync().ConfigureAwait(false);
                     break;
 
+                case ControlTypes.ReloadConfig:
+                {
+                    // Bridges added to ~/.hubris/config.json (by the desktop import) join the running hub without a restart.
+                    var added = new List<string>();
+                    foreach (var spec in _bridgeHost.NewSpecsFromConfig())
+                    {
+                        var bridge = await _bridgeHost.AddAsync(spec, _lifetime.Token).ConfigureAwait(false);
+                        if (bridge is null) continue;
+                        BridgeAdded?.Invoke(bridge);
+                        added.Add(bridge.Name);
+                    }
+                    ack.Bridges = added;
+                    if (added.Count > 0)
+                    {
+                        Log.Info($"config reload added {added.Count} bridge(s): {string.Join(", ", added)}");
+                        if (NotifyToolsChanged is { } notifyReload) await notifyReload().ConfigureAwait(false);
+                        await EmitToolsChangedAsync().ConfigureAwait(false);
+                        await Server.BroadcastAsync(new ControlMessage { Type = ControlTypes.BridgesChanged, Timestamp = DateTime.UtcNow.ToString("O"), Bridges = added }).ConfigureAwait(false);
+                    }
+                    break;
+                }
+
+                case ControlTypes.CacheMaintain:
+                    if (_rt.ToolCache is { } tc) tc.Maintain(); else Fail(ack, "tool cache is disabled");
+                    break;
+
                 case ControlTypes.Shutdown:
                     Log.Info($"shutdown requested by control client {client.Id}");
                     RequestShutdown?.Invoke();
@@ -309,21 +339,13 @@ public sealed class ControlHub : IAsyncDisposable
             {
                 var tools = await bridge.StartAsync(_lifetime.Token).ConfigureAwait(false);
                 if (ReplaceBridgeTools is { } replace) await replace(bridge, tools).ConfigureAwait(false);
-                CacheBridgeTools(bridge, tools);
+                _bridgeHost.Cache(bridge, tools);
             }
             catch (Exception ex)
             {
                 Log.Warn($"bridge '{bridge.Name}' refresh failed: {ex.Message}");
             }
         }
-    }
-
-    public void CacheBridgeTools(ExternalMcpBridge bridge, List<ToolDefinition> tools)
-    {
-        if (_rt.ToolCache is not { } cache) return;
-        int tokens = 0;
-        foreach (var def in tools) tokens += ToolRegistry.EstimateTokens(new BridgedTool(bridge, def));
-        cache.Put(bridge.Name, ToolCacheStore.ComputeHash(bridge.Command, bridge.Args, bridge.Env.Keys), tools, tokens);
     }
 
     private static void Fail(ControlMessage ack, string error)

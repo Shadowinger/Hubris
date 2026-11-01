@@ -1,6 +1,8 @@
 using System.Collections.ObjectModel;
 using System.Text;
 using Hubris.Cli;
+using Hubris.Config;
+using Hubris.Control;
 using Hubris.Desktop.Services;
 
 namespace Hubris.Desktop.ViewModels;
@@ -38,7 +40,113 @@ public sealed class ConfigViewModel : ObservableObject
         SetSafeCommand = new RelayCommand(() => IsBypass = false);
         SetBypassCommand = new RelayCommand(() => IsBypass = true);
 
-        Bridges.CollectionChanged += (_, _) => Raise(nameof(CommandPreview));
+        ScanClientsCommand = new RelayCommand(ScanClients);
+        SaveBridgesCommand = new RelayCommand(SaveBridges);
+        LoadBridges();
+        ScanClients();
+    }
+
+    /// <summary>Installed by MainViewModel: asks every connected hub to pick up config.json; returns how many were told.</summary>
+    public Func<Task<int>>? ReloadRunningHubs { get; set; }
+
+    public ObservableCollection<DetectedClientRow> Clients { get; } = new();
+    public bool NoClients => Clients.Count == 0;
+    public string ConfigPath => HubrisPaths.ConfigPath;
+    public RelayCommand ScanClientsCommand { get; }
+    public RelayCommand SaveBridgesCommand { get; }
+
+    private void LoadBridges()
+    {
+        Bridges.Clear();
+        try
+        {
+            foreach (var b in HubrisConfigFile.Load().Bridges)
+            {
+                var row = NewBridge();
+                row.Name = b.Name; row.Command = b.Command; row.Args = string.Join(' ', b.Args.Select(Quote)); row.Source = b.Source ?? "";
+                row.EnvCount = b.Env?.Count ?? 0;
+                Bridges.Add(row);
+            }
+        }
+        catch (Exception ex) { AppendLog($"config.json unreadable: {ex.Message}"); }
+    }
+
+    private void SaveBridges()
+    {
+        var cfg = new HubrisConfig();
+        var existing = SafeLoad();
+        foreach (var row in Bridges)
+        {
+            if (string.IsNullOrWhiteSpace(row.Name) || string.IsNullOrWhiteSpace(row.Command)) continue;
+            var prev = existing.Bridges.Find(b => b.Name == row.Name.Trim());
+            cfg.Bridges.Add(new BridgeConfig
+            {
+                Name = row.Name.Trim(), Command = row.Command.Trim(), Args = SplitArgs(row.Args),
+                Env = prev?.Env, Source = prev?.Source ?? (string.IsNullOrEmpty(row.Source) ? null : row.Source),
+            });
+        }
+        HubrisConfigFile.Save(cfg);
+        LastResult = $"✓ {cfg.Bridges.Count} bridge(s) saved to {ConfigPath}.";
+        AppendLog(LastResult);
+        _ = NotifyHubsAsync();
+    }
+
+    private static HubrisConfig SafeLoad()
+    {
+        try { return HubrisConfigFile.Load(); } catch (Exception) { return new HubrisConfig(); }
+    }
+
+    private void ScanClients()
+    {
+        Clients.Clear();
+        foreach (var c in ClientConfigScanner.Scan(string.IsNullOrEmpty(_workspaceFolder) ? null : _workspaceFolder))
+            Clients.Add(new DetectedClientRow(c, ImportClient, RestoreClient));
+        Raise(nameof(NoClients));
+    }
+
+    private void ImportClient(DetectedClient client)
+    {
+        if (!ServerPathValid) { LastResult = "✗ Point 'Server binary' at the Hubris executable first."; return; }
+        try
+        {
+            var cfg = SafeLoad();
+            var result = ClientConfigHijacker.Import(client, cfg);
+            HubrisConfigFile.Save(cfg);
+            string backup = ClientConfigHijacker.Hijack(client, _serverPath, BuildServerArgs());
+            LastResult = $"✓ {client.Kind.Name}: imported {result.Added.Count} bridge(s) ({string.Join(", ", result.Added)}), {result.Skipped.Count} already present; config rewritten, backup {Path.GetFileName(backup)}. Restart the client to pick it up.";
+            AppendLog(LastResult);
+            LoadBridges();
+            ScanClients();
+            _ = NotifyHubsAsync();
+        }
+        catch (Exception ex)
+        {
+            LastResult = $"✗ Import failed: {ex.Message}";
+            AppendLog(LastResult);
+        }
+    }
+
+    private void RestoreClient(DetectedClient client)
+    {
+        try
+        {
+            string? used = ClientConfigHijacker.Restore(client);
+            LastResult = used is null ? $"✗ {client.Kind.Name}: no Hubris backup next to {client.Path}" : $"✓ {client.Kind.Name}: restored from {Path.GetFileName(used)}. Restart the client to pick it up.";
+            AppendLog(LastResult);
+            ScanClients();
+        }
+        catch (Exception ex)
+        {
+            LastResult = $"✗ Restore failed: {ex.Message}";
+            AppendLog(LastResult);
+        }
+    }
+
+    private async Task NotifyHubsAsync()
+    {
+        if (ReloadRunningHubs is null) return;
+        int n = await ReloadRunningHubs();
+        if (n > 0) Avalonia.Threading.Dispatcher.UIThread.Post(() => AppendLog($"asked {n} running hub(s) to reload config.json"));
     }
 
     /// <summary>Installed by the view: opens a folder picker and returns the chosen path.</summary>
@@ -102,13 +210,7 @@ public sealed class ConfigViewModel : ObservableObject
         if (_noControl) list.Add("--no-control");
         if (double.TryParse(_approvalTimeout, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var t) && t != 120 && t >= 1)
             list.Add($"--approval-timeout={t.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
-        foreach (var b in Bridges)
-        {
-            if (string.IsNullOrWhiteSpace(b.Name) || string.IsNullOrWhiteSpace(b.Command)) continue;
-            list.Add($"--bridge={b.Name.Trim()}:{b.Command.Trim()}");
-            list.AddRange(SplitArgs(b.Args));
-        }
-        return list;
+        return list; // bridges live in ~/.hubris/config.json, not on the command line
     }
 
     private void InstallClaude()
@@ -196,9 +298,46 @@ public sealed class BridgeRow : ObservableObject
     private string _name = "";
     private string _command = "";
     private string _args = "";
+    private string _source = "";
+    private int _envCount;
 
     public string Name { get => _name; set => Set(ref _name, value); }
     public string Command { get => _command; set => Set(ref _command, value); }
     public string Args { get => _args; set => Set(ref _args, value); }
+    public string Source { get => _source; set { if (Set(ref _source, value)) Raise(nameof(HasSource)); } }
+    public bool HasSource => _source.Length > 0;
+    public int EnvCount { get => _envCount; set { if (Set(ref _envCount, value)) { Raise(nameof(EnvText)); Raise(nameof(HasEnv)); } } }
+    public bool HasEnv => _envCount > 0;
+    public string EnvText => $"{_envCount} env";
     public RelayCommand? RemoveCommand { get; set; }
+}
+
+public sealed class DetectedClientRow
+{
+    public DetectedClientRow(DetectedClient client, Action<DetectedClient> import, Action<DetectedClient> restore)
+    {
+        Client = client;
+        Name = client.Kind.Name;
+        Path = client.Path;
+        ServerCount = client.Servers.Count;
+        ServersText = ServerCount == 1 ? "1 server" : $"{ServerCount} servers";
+        ServerNames = string.Join(", ", client.Servers.Select(s => s.Name));
+        IsGateway = client.IsGateway;
+        HasBackup = ClientConfigHijacker.LatestBackup(client.Path) is not null;
+        ImportCommand = new RelayCommand(() => import(client), () => !IsGateway);
+        RestoreCommand = new RelayCommand(() => restore(client), () => HasBackup);
+    }
+
+    public DetectedClient Client { get; }
+    public string Name { get; }
+    public string Path { get; }
+    public int ServerCount { get; }
+    public string ServersText { get; }
+    public string ServerNames { get; }
+    public bool HasServers => ServerCount > 0;
+    public bool IsGateway { get; }
+    public bool HasBackup { get; }
+    public string ActionText => IsGateway ? "Already routed through Hubris" : ServerCount == 0 ? "Register Hubris" : "Import & hijack";
+    public RelayCommand ImportCommand { get; }
+    public RelayCommand RestoreCommand { get; }
 }

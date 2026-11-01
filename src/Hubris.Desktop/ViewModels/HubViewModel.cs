@@ -168,9 +168,14 @@ public sealed class HubViewModel : ObservableObject
                 break;
             case ControlTypes.Ack:
                 if (m.Ok == false) AddEvent(EventRow.Error($"command failed: {m.Error}"));
+                else if (m.Bridges is { Count: > 0 } b) AddEvent(EventRow.Info($"bridges added: {string.Join(", ", b)}"));
                 break;
+            case ControlTypes.BridgesChanged:
+                break; // tools_changed follows and refreshes the list
         }
     }
+
+    public Task ReloadConfigAsync() => _client.ReloadConfigAsync();
 
     public void MarkDisconnected()
     {
@@ -344,6 +349,14 @@ public sealed class EventRow
         Tool = "log",
         Outcome = m.Level ?? "info",
         Preview = m.Text ?? "",
+    };
+
+    public static EventRow Info(string text) => new()
+    {
+        Time = Fmt.LocalTime(null),
+        Tool = "desktop",
+        Outcome = "info",
+        Preview = text,
     };
 
     public static EventRow Error(string text) => new()

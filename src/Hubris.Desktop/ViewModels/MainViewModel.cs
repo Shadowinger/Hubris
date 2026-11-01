@@ -17,6 +17,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _discovery = discovery;
         _launcher = launcher;
         Config = new ConfigViewModel(launcher);
+        Config.ReloadRunningHubs = async () =>
+        {
+            foreach (var h in Hubs.ToArray()) await h.ReloadConfigAsync();
+            return Hubs.Count;
+        };
         ShowConfigCommand = new RelayCommand(() => { SelectedHub = null; ShowConfig = true; });
         RescanCommand = new AsyncCommand(() => _discovery.RescanAsync());
         Hubs.CollectionChanged += (_, _) => { Raise(nameof(HasHubs)); Raise(nameof(NoHubs)); RaisePending(); };
