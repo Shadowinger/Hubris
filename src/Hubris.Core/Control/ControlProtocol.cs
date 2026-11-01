@@ -41,6 +41,7 @@ public sealed class ControlMessage
     [JsonPropertyName("clients")] public int? Clients { get; set; }
     [JsonPropertyName("tools")] public List<ToolInfo>? Tools { get; set; }
     [JsonPropertyName("bridges")] public List<string>? Bridges { get; set; }
+    [JsonPropertyName("bridgesStale")] public List<string>? BridgesStale { get; set; }
     [JsonPropertyName("decisions")] public List<ToolDecision>? Decisions { get; set; }
 
     // ---- tool_call
@@ -130,7 +131,6 @@ public static class ControlTypes
     public const string ClearCache = "clear_cache";
     public const string ReloadConfig = "reload_config";
     public const string CacheMaintain = "cache_maintain";
-    public const string BridgesChanged = "bridges_changed";
     public const string Shutdown = "shutdown";
 }
 

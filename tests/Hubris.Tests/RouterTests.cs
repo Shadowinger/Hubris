@@ -24,6 +24,7 @@ internal sealed class HubHarness : IAsyncDisposable
     public ToolRegistry Registry { get; }
     public SecurityInterceptor Security { get; }
     public FakeTool Mutating { get; } = new("mut", ToolRiskLevel.Mutating);
+    public FakeTool Destructive { get; } = new("nuke", ToolRiskLevel.Destructive);
     public FakeTool Hidden { get; } = new("hidden_tool", ToolRiskLevel.ReadOnly, pinned: false, description: "a hidden helper");
 
     public HubHarness(bool compact = true)
@@ -36,6 +37,7 @@ internal sealed class HubHarness : IAsyncDisposable
         Registry.Register(new SearchToolsMetaTool(Registry));
         Registry.Register(new ExecuteToolMetaTool(Registry));
         Registry.Register(Mutating);
+        Registry.Register(Destructive);
         Registry.Register(Hidden);
 
         var transport = new StdioTransport(_toHub.Reader.AsStream(), _fromHub.Writer.AsStream());
@@ -156,12 +158,24 @@ public class RouterTests
     }
 
     [Fact]
-    public async Task Remembered_allow_runs_a_blocked_tool_without_a_ui()
+    public async Task Remembered_allow_runs_a_declared_destructive_tool_without_a_ui()
+    {
+        await using var hub = new HubHarness();
+        hub.Security.Remember("nuke", allow: true);
+        var ok = await hub.ToolAsync("nuke", new JsonObject { ["x"] = 1 });
+        Assert.Null(ok["isError"]);
+        Assert.Equal(1, hub.Destructive.Calls);
+    }
+
+    [Fact]
+    public async Task Remembered_allow_never_waives_an_argument_pattern_hit()
     {
         await using var hub = new HubHarness();
         hub.Security.Remember("mut", allow: true);
-        var ok = await hub.ToolAsync("mut", new JsonObject { ["cmd"] = "rm -rf /" });
+        var ok = await hub.ToolAsync("mut", new JsonObject { ["cmd"] = "ls" });
         Assert.Null(ok["isError"]);
+        var blocked = await hub.ToolAsync("mut", new JsonObject { ["cmd"] = "rm -rf /" });
+        Assert.True(blocked["isError"]!.GetValue<bool>()); // no UI connected -> blocked, not auto-approved
         Assert.Equal(1, hub.Mutating.Calls);
     }
 

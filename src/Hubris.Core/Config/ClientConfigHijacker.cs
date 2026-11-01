@@ -73,7 +73,7 @@ public static class ClientConfigHijacker
             root = (fs.Length == 0 ? null : JsonNode.Parse(fs, nodeOptions: null, ClientConfigScanner.Lenient)) as JsonObject ?? new JsonObject();
 
         var snapshot = new McpSnapshot { File = client.Path, TakenAt = DateTime.UtcNow.ToString("O") };
-        snapshot.Root = root[client.RootKeyOf()] is JsonObject r ? (JsonObject)r.DeepClone() : null;
+        snapshot.Root = root[client.Kind.RootKey] is JsonObject r ? (JsonObject)r.DeepClone() : null;
 
         JsonObject block = new();
         if (!empty)
@@ -224,6 +224,8 @@ public static class ClientConfigHijacker
             w.Flush();
             fs.WriteByte((byte)'\n');
         }
+        // A rename would replace a 0600 config (Claude Desktop's carries tokens) with a umask-default 0644 file.
+        if (!OperatingSystem.IsWindows() && File.Exists(path)) File.SetUnixFileMode(tmp, File.GetUnixFileMode(path));
         File.Move(tmp, path, overwrite: true);
     }
 
@@ -235,7 +237,15 @@ public static class ClientConfigHijacker
     }
 
     private static bool SameLaunch(BridgeConfig b, DetectedServer s)
-        => b.Command == s.Command && b.Args.SequenceEqual(s.Args);
+        => b.Command == s.Command && b.Args.SequenceEqual(s.Args) && SameEnv(b.Env, s.Env);
+
+    private static bool SameEnv(Dictionary<string, string>? a, Dictionary<string, string> b)
+    {
+        if ((a?.Count ?? 0) != b.Count) return false;
+        if (a is null) return true;
+        foreach (var kv in a) if (!b.TryGetValue(kv.Key, out var v) || v != kv.Value) return false;
+        return true;
+    }
 
     private static string SafeName(string raw)
     {
@@ -244,5 +254,4 @@ public static class ClientConfigHijacker
         return name.Length == 0 ? "bridge" : name;
     }
 
-    private static string RootKeyOf(this DetectedClient client) => client.Kind.RootKey;
 }

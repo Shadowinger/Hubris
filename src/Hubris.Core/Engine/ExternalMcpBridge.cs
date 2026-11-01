@@ -109,7 +109,13 @@ public sealed class ExternalMcpBridge : IAsyncDisposable
 
         var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
         process.Exited += OnExited;
-        process.Start();
+        try { process.Start(); }
+        catch
+        {
+            process.Exited -= OnExited;
+            process.Dispose();
+            throw;
+        }
         _process = process;
 
         _stdin = new JsonLineWriter(PipeWriter.Create(process.StandardInput.BaseStream, new StreamPipeWriterOptions(leaveOpen: false)));

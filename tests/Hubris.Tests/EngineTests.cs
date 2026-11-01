@@ -78,6 +78,20 @@ public class ToolCacheStoreTests : IDisposable
     }
 
     [Fact]
+    public void Two_processes_worth_of_stores_share_one_file()
+    {
+        using var a = Open();
+        using var b = Open();
+        string h = ToolCacheStore.ComputeHash("c", [], []);
+        a.Put("x", h, Tools("t"), 1);
+        Assert.NotNull(b.TryGet("x", h));           // reader sees the other connection's write (WAL)
+        Assert.True(a.MaintainIfDue(TimeSpan.Zero));   // VACUUM while b holds an open connection
+        Assert.True(b.MaintainIfDue(TimeSpan.Zero));   // and the other way round; a busy database must not throw
+        b.Put("x", h, Tools("t", "u"), 2);
+        Assert.Equal(2, a.TryGet("x", h)!.Count);
+    }
+
+    [Fact]
     public void Wal_mode_and_maintenance()
     {
         using var store = Open();

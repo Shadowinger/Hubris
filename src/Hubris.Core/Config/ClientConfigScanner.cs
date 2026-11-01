@@ -200,9 +200,6 @@ public static class ClientConfigScanner
             if (string.Equals(file, "Hubris", StringComparison.OrdinalIgnoreCase)) return true;
             if (Environment.ProcessPath is { } self && string.Equals(Path.GetFullPath(command), Path.GetFullPath(self), StringComparison.Ordinal)) return true;
         }
-        if (entry["args"] is JsonArray args)
-            foreach (var a in args)
-                if (a is JsonValue v && v.TryGetValue<string>(out var s) && s.Contains("hubris", StringComparison.OrdinalIgnoreCase)) return true;
-        return false;
+        return false; // arguments are not inspected: a path that merely contains "hubris" is somebody else's server
     }
 }

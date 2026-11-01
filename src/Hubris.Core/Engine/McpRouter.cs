@@ -16,14 +16,14 @@ public sealed class McpRouter
     private readonly ToolRegistry _registry;
     private readonly SecurityInterceptor _security;
     private readonly HubRuntime _runtime;
-    private readonly List<ExternalMcpBridge> _bridges;
+    private readonly IEnumerable<ExternalMcpBridge> _bridges;
     private readonly ControlHub? _control;
     private readonly ConcurrentDictionary<RpcId, CancellationTokenSource> _inflight = new();
     private readonly CancellationTokenSource _shutdown = new();
     private volatile bool _initialized;
     private long _callSeq;
 
-    public McpRouter(StdioTransport transport, ToolRegistry registry, SecurityInterceptor security, HubRuntime runtime, List<ExternalMcpBridge> bridges, ControlHub? control = null)
+    public McpRouter(StdioTransport transport, ToolRegistry registry, SecurityInterceptor security, HubRuntime runtime, IEnumerable<ExternalMcpBridge> bridges, ControlHub? control = null)
     {
         _transport = transport;
         _registry = registry;
@@ -230,6 +230,11 @@ public sealed class McpRouter
 
             // A remembered session decision short-circuits the gate (Bypass never reaches here: Evaluate returns Ok).
             bool? remembered = _security.DecisionFor(tool.Name);
+            if (remembered == true && verdict.PatternHit)
+            {
+                Log.Info($"'{tool.Name}' is remembered as allowed, but the arguments hit a destructive pattern: asking");
+                remembered = null;
+            }
             if (remembered == false)
             {
                 var denied = CallToolResult.Error($"{reason} Denied for this session.");

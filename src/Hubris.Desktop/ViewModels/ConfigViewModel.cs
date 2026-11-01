@@ -1,5 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Text;
+using System.Diagnostics;
+using System.Text.Json.Nodes;
 using Hubris.Cli;
 using Hubris.Config;
 using Hubris.Control;
@@ -127,6 +129,12 @@ public sealed class ConfigViewModel : ObservableObject
     private void ImportClient(DetectedClient client)
     {
         if (!ServerPathValid) { LastResult = "✗ Point 'Server binary' at the Hubris executable first."; return; }
+        if (RunningClientProcess(client.Kind) is { } running)
+        {
+            LastResult = $"✗ {client.Kind.Name}: quit '{running}' first — it keeps this config in memory and would write the old server list back over the takeover.";
+            AppendLog(LastResult);
+            return;
+        }
         try
         {
             var cfg = SafeLoad();
@@ -192,7 +200,7 @@ public sealed class ConfigViewModel : ObservableObject
     public bool NoControl { get => _noControl; set { if (Set(ref _noControl, value)) Raise(nameof(CommandPreview)); } }
     public string ApprovalTimeout { get => _approvalTimeout; set { if (Set(ref _approvalTimeout, value)) Raise(nameof(CommandPreview)); } }
     public string WorkspaceFolder { get => _workspaceFolder; set { if (Set(ref _workspaceFolder, value)) { Raise(nameof(VsCodeConfigPath)); RaiseCommands(); } } }
-    public string ClaudeConfigPath => AutoInstaller.ClaudeConfigPath() ?? "(unsupported OS)";
+    public string ClaudeConfigPath => ClientConfigScanner.ClaudeDesktopPath(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
     public string VsCodeConfigPath => string.IsNullOrEmpty(_workspaceFolder) ? "(choose a workspace folder)" : Path.Combine(_workspaceFolder, ".vscode", "mcp.json");
     public string LogText { get => _logText; private set => Set(ref _logText, value); }
     public string LastResult { get => _lastResult; private set => Set(ref _lastResult, value); }
@@ -243,16 +251,44 @@ public sealed class ConfigViewModel : ObservableObject
 
     private void InstallClaude()
     {
-        int rc = AutoInstaller.InstallClaude(_serverPath, BuildServerArgs());
-        LastResult = rc == 0 ? $"✓ Registered 'hubris' in {ClaudeConfigPath}. Restart Claude Desktop to pick it up." : "✗ Failed to write Claude Desktop config (see log).";
+        bool ok = ClientConfigHijacker.MergeServerEntry(ClaudeConfigPath, "mcpServers", ClientConfigHijacker.ServerKey, new JsonObject { ["command"] = _serverPath, ["args"] = ArgsNode() });
+        LastResult = ok ? $"✓ Registered 'hubris' in {ClaudeConfigPath}. Restart Claude Desktop to pick it up." : "✗ Failed to write Claude Desktop config (see log).";
         AppendLog(LastResult);
     }
 
     private void InstallVsCode()
     {
-        int rc = AutoInstaller.InstallVsCode(_workspaceFolder, _serverPath, BuildServerArgs());
-        LastResult = rc == 0 ? $"✓ Registered 'hubris' in {VsCodeConfigPath}." : "✗ Failed to write .vscode/mcp.json (see log).";
+        bool ok = ClientConfigHijacker.MergeServerEntry(Path.Combine(_workspaceFolder, ".vscode", "mcp.json"), "servers", ClientConfigHijacker.ServerKey, new JsonObject { ["type"] = "stdio", ["command"] = _serverPath, ["args"] = ArgsNode() });
+        LastResult = ok ? $"✓ Registered 'hubris' in {VsCodeConfigPath}." : "✗ Failed to write .vscode/mcp.json (see log).";
         AppendLog(LastResult);
+    }
+
+    private JsonArray ArgsNode()
+    {
+        var arr = new JsonArray();
+        foreach (var a in BuildServerArgs()) arr.Add((JsonNode?)JsonValue.Create(a));
+        return arr;
+    }
+
+    /// <summary>Clients keep their config in memory and write it back later; a hijack while they run can be undone silently.</summary>
+    private static string? RunningClientProcess(ClientKind kind)
+    {
+        string[] names = kind.Id switch
+        {
+            "claude-desktop" => ["Claude"],
+            "claude-code" or "project-mcp" => ["claude"],
+            "cursor" or "cursor-project" => ["Cursor"],
+            "windsurf" => ["Windsurf"],
+            _ => [],
+        };
+        foreach (var n in names)
+        {
+            var procs = Process.GetProcessesByName(n);
+            bool any = procs.Length > 0;
+            foreach (var p in procs) p.Dispose();
+            if (any) return n;
+        }
+        return null;
     }
 
     private void LaunchTest()

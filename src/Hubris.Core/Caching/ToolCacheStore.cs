@@ -138,17 +138,26 @@ public sealed class ToolCacheStore : IDisposable
     {
         lock (_gate)
         {
-            var db = Require();
-            long last = 0;
-            using (var get = db.CreateCommand())
+            try
             {
-                get.CommandText = "SELECT value FROM meta WHERE key = 'last_maintenance'";
-                if (get.ExecuteScalar() is string s) long.TryParse(s, out last);
+                var db = Require();
+                long last = 0;
+                using (var get = db.CreateCommand())
+                {
+                    get.CommandText = "SELECT value FROM meta WHERE key = 'last_maintenance'";
+                    if (get.ExecuteScalar() is string s) long.TryParse(s, out last);
+                }
+                long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                if (now - last < (long)every.TotalSeconds) return false;
+                MaintainLocked(db, now);
+                return true;
             }
-            long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            if (now - last < (long)every.TotalSeconds) return false;
-            MaintainLocked(db, now);
-            return true;
+            catch (SqliteException ex)
+            {
+                // Another hub is vacuuming right now (Claude starts several at once); the cache itself is fine.
+                Log.Warn($"tool cache maintenance skipped: {ex.Message}");
+                return false;
+            }
         }
     }
 

@@ -175,10 +175,12 @@ public sealed class HubViewModel : ObservableObject
                     AddEvent(EventRow.Error(m.Error is { } e && e.StartsWith("unknown command", StringComparison.Ordinal)
                         ? $"{e} — this hub is an older Hubris build ({Version}); restart the MCP client"
                         : $"command failed: {m.Error}"));
-                else if (m.Bridges is { Count: > 0 } b) AddEvent(EventRow.Info($"bridges added: {string.Join(", ", b)}"));
+                else
+                {
+                    if (m.Bridges is { Count: > 0 } b) AddEvent(EventRow.Info($"bridges added: {string.Join(", ", b)}"));
+                    if (m.BridgesStale is { Count: > 0 } st) AddEvent(EventRow.Error($"config changed for running bridge(s) {string.Join(", ", st)} — restart the client to apply"));
+                }
                 break;
-            case ControlTypes.BridgesChanged:
-                break; // tools_changed follows and refreshes the list
         }
     }
 

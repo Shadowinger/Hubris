@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Hubris.Caching;
+using System.Text.Json.Nodes;
 using Hubris.Cli;
 using Hubris.Config;
 using Hubris.Control;
@@ -26,8 +27,16 @@ if (opts.ShowHelp) { CliOptions.PrintUsage(); return 0; }
 if (opts.ShowVersion) { Console.Error.WriteLine($"Hubris {HubRuntime.Version}"); return 0; }
 Log.Verbose = opts.Verbose;
 
-if (opts.InstallVsCode) return AutoInstaller.InstallVsCode(Environment.CurrentDirectory, Environment.ProcessPath, opts.ServerArgs());
-if (opts.InstallClaude) return AutoInstaller.InstallClaude(Environment.ProcessPath, opts.ServerArgs());
+if (opts.InstallVsCode || opts.InstallClaude)
+{
+    if (Environment.ProcessPath is not { } exe) { Log.Error("server executable path is unknown"); return 1; }
+    var argNodes = new JsonArray();
+    foreach (var a in opts.ServerArgs()) argNodes.Add((JsonNode?)JsonValue.Create(a));
+    bool ok = opts.InstallVsCode
+        ? ClientConfigHijacker.MergeServerEntry(Path.Combine(Environment.CurrentDirectory, ".vscode", "mcp.json"), "servers", ClientConfigHijacker.ServerKey, new JsonObject { ["type"] = "stdio", ["command"] = exe, ["args"] = argNodes })
+        : ClientConfigHijacker.MergeServerEntry(ClientConfigScanner.ClaudeDesktopPath(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)), "mcpServers", ClientConfigHijacker.ServerKey, new JsonObject { ["command"] = exe, ["args"] = argNodes });
+    return ok ? 0 : 1;
+}
 
 // ---------------------------------------------------------------- server mode
 
@@ -54,7 +63,6 @@ if (!opts.NoCache)
     {
         toolCache = new ToolCacheStore(HubrisPaths.CacheDbPath, TimeSpan.FromHours(opts.CacheTtlHours));
         toolCache.Open();
-        toolCache.MaintainIfDue(TimeSpan.FromDays(7));
     }
     catch (Exception ex)
     {
@@ -94,6 +102,7 @@ var bridges = runtime.Bridges;
 var bridgeHost = new BridgeHost(runtime, registry);
 foreach (var spec in bridgeSpecs)
     await bridgeHost.AddAsync(spec, shutdown.Token);
+toolCache?.MaintainIfDue(TimeSpan.FromDays(7)); // after the bridges: never on the startup path, never fatal
 
 ControlHub? control = null;
 if (!opts.NoControl)

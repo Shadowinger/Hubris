@@ -113,19 +113,28 @@ check(not res["result"].get("isError") and res["result"]["content"][0]["text"].s
 ev, _ = recv("tool_call")
 check(ev["outcome"] == "approved", f"tool_call event outcome={ev['outcome']}")
 
-# --- approval: remember the decision (allow-list), then forget it
-call_async(14, "py__shell", {"cmd": "rm -rf /tmp/r1"})
+# --- approval: remember the decision (allow-list) for a declared-destructive tool, then forget it
+call_async(14, "py__nuke", {"target": "r1"})
 req, _ = recv("approval_request")
 send({"type":"approve","approvalId":req["approvalId"],"remember":True}); recv("ack"); read_response(14); recv("tool_call")
-# a second identical call must run straight through with NO approval_request (held calls block for 5s before isError)
-t0 = time.time(); call_async(15, "py__shell", {"cmd": "rm -rf /tmp/r1"}); res = read_response(15)
-check(not res["result"].get("isError") and time.time()-t0 < 2, "approve+remember -> next identical call runs without an approval_request")
+# a second call must run straight through with NO approval_request (held calls block for 5s before isError)
+t0 = time.time(); call_async(15, "py__nuke", {"target": "r1"}); res = read_response(15)
+check(not res["result"].get("isError") and time.time()-t0 < 2, "approve+remember -> next call of the destructive tool runs without an approval_request")
 check(recv("tool_call")[0]["outcome"] == "approved", "remembered call emits an approved tool_call")
-# forget -> the tool is held for approval again
+# a remembered allow on a *mutating* tool never covers an argument-pattern hit: it still asks
+call_async(17, "py__shell", {"cmd": "rm -rf /tmp/r2"})
+req17, _ = recv("approval_request")
+send({"type":"approve","approvalId":req17["approvalId"],"remember":True}); recv("ack"); read_response(17); recv("tool_call")
+call_async(18, "py__shell", {"cmd": "rm -rf /tmp/r2"})
+req18, _ = recv("approval_request")
+check(req18["tool"] == "py__shell", "remembered allow does not waive a destructive-pattern hit: asked again")
+send({"type":"deny","approvalId":req18["approvalId"]}); recv("ack"); read_response(18); recv("tool_call")
 send({"type":"forget","tool":"py__shell"}); recv("ack")
-call_async(16, "py__shell", {"cmd": "rm -rf /tmp/r1"})
+# forget -> the destructive tool is held for approval again
+send({"type":"forget","tool":"py__nuke"}); recv("ack")
+call_async(16, "py__nuke", {"target": "r1"})
 req, _ = recv("approval_request")
-check(req["tool"] == "py__shell", "forget -> tool is held for approval again")
+check(req["tool"] == "py__nuke", "forget -> tool is held for approval again")
 send({"type":"deny","approvalId":req["approvalId"]}); recv("ack"); read_response(16)
 
 # --- approval: timeout (5s)
@@ -194,7 +203,7 @@ sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); sock.connect(desc["soc
 # --- audit #9: a crashed bridge stops advertising its tools
 import signal
 for line in subprocess.run(["ps", "-ax", "-o", "pid=,command="], capture_output=True, text=True).stdout.splitlines():
-    if "echo_server.py" in line and "--stdio" not in line:  # the child only; the hub's own command line also names the script
+    if ECHO in line and "--child-flag" in line and "--stdio" not in line:  # only *our* child; the hub's own command line also names the script
         os.kill(int(line.split()[0]), signal.SIGKILL)
 tc, _ = recv("tools_changed", timeout=10)
 check(not [t for t in tc["tools"] if t["name"].startswith("py__")], "bridge exit -> tools_changed without py__ tools")
@@ -225,11 +234,11 @@ rpc2({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"
 hub2.stdin.write(json.dumps({"jsonrpc":"2.0","method":"notifications/initialized"}) + "\n"); hub2.stdin.flush()
 t = rpc2({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"hub_status"}})["result"]["content"][0]["text"]
 check("toolcache=hits 1/miss 0" in t and "bridges=1 (0 running)" in t and "tools=8" in t, "second run: tools listed from cache, bridge process NOT started")
-children = [l for l in subprocess.run(["ps","-ax","-o","command="], capture_output=True, text=True).stdout.splitlines() if "echo_server.py" in l and "--stdio" not in l]
+children = [l for l in subprocess.run(["ps","-ax","-o","command="], capture_output=True, text=True).stdout.splitlines() if ECHO in l and "--child-flag" in l and "--stdio" not in l]
 check(not children, "no echo_server child before the first bridged call")
 rn = rpc2({"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"mcp_execute_tool","arguments":{"toolName":"py__nuke","arguments":{}}}})
 tn = rn["result"]["content"][0]["text"]
-children = [l for l in subprocess.run(["ps","-ax","-o","command="], capture_output=True, text=True).stdout.splitlines() if "echo_server.py" in l and "--stdio" not in l]
+children = [l for l in subprocess.run(["ps","-ax","-o","command="], capture_output=True, text=True).stdout.splitlines() if ECHO in l and "--child-flag" in l and "--stdio" not in l]
 check(rn["result"].get("isError") and "Risk=Destructive" in tn and not children, "cached destructive tool is blocked by Safe mode without spawning the bridge")
 r = rpc2({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"mcp_execute_tool","arguments":{"toolName":"py__peek","arguments":{"what":"lazy"}}}})
 check(r["result"]["content"][0]["text"].startswith("echo:peek"), "first bridged call spawned the child and answered")

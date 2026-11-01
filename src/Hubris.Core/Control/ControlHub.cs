@@ -322,8 +322,9 @@ public sealed class ControlHub : IAsyncDisposable
                 case ControlTypes.ReloadConfig:
                 {
                     // Bridges added to ~/.hubris/config.json (by the desktop import) join the running hub without a restart.
+                    var (fresh, stale) = _bridgeHost.DiffConfig();
                     var added = new List<string>();
-                    foreach (var spec in _bridgeHost.NewSpecsFromConfig())
+                    foreach (var spec in fresh)
                     {
                         var bridge = await _bridgeHost.AddAsync(spec, _lifetime.Token).ConfigureAwait(false);
                         if (bridge is null) continue;
@@ -331,12 +332,12 @@ public sealed class ControlHub : IAsyncDisposable
                         added.Add(bridge.Name);
                     }
                     ack.Bridges = added;
+                    if (stale.Count > 0) { ack.BridgesStale = stale; Log.Warn($"config changed for running bridge(s) {string.Join(", ", stale)}; takes effect at the next hub start"); }
                     if (added.Count > 0)
                     {
                         Log.Info($"config reload added {added.Count} bridge(s): {string.Join(", ", added)}");
                         if (NotifyToolsChanged is { } notifyReload) await notifyReload().ConfigureAwait(false);
                         await EmitToolsChangedAsync().ConfigureAwait(false);
-                        await Server.BroadcastAsync(new ControlMessage { Type = ControlTypes.BridgesChanged, Timestamp = DateTime.UtcNow.ToString("O"), Bridges = added }).ConfigureAwait(false);
                     }
                     break;
                 }

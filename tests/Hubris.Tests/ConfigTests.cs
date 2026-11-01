@@ -66,8 +66,8 @@ public class ConfigTests : IDisposable
         Assert.True(code.HubrisPresent);
 
         var cursor = Assert.Single(clients, c => c.Kind == ClientConfigScanner.Cursor);
-        Assert.Empty(cursor.Servers); // arg mentions hubris -> guarded
-        Assert.True(cursor.HubrisPresent);
+        Assert.Equal(["only"], cursor.Servers.Select(s => s.Name)); // "hubris" inside an argument is not the gateway
+        Assert.False(cursor.HubrisPresent);
     }
 
     [Fact]
@@ -162,6 +162,29 @@ public class ConfigTests : IDisposable
         Assert.Equal("later", restored["projects"]!["/w/alpha"]!["history"]![0]!.GetValue<string>());
         Assert.Equal(8, restored["numStartups"]!.GetValue<int>());
         Assert.False(File.Exists(Path.Combine(_home, "backups", "claude_mcp_snapshot.json")));
+    }
+
+    [Fact]
+    public void Import_keeps_servers_that_differ_only_by_env()
+    {
+        string path = Write("cfg.json", """{ "mcpServers": { "gh": { "command": "npx", "args": ["gh"], "env": { "GITHUB_TOKEN": "a" } } } }""");
+        var client = ClientConfigScanner.Parse(ClientConfigScanner.Cursor, path)!;
+        var cfg = new HubrisConfig();
+        cfg.Bridges.Add(new BridgeConfig { Name = "gh", Command = "npx", Args = ["gh"], Env = new() { ["GITHUB_TOKEN"] = "b" } });
+        var result = ClientConfigHijacker.Import(client, cfg);
+        Assert.Equal(["gh-2"], result.Added);
+        Assert.Equal("a", cfg.Bridges[1].Env!["GITHUB_TOKEN"]);
+    }
+
+    [Fact]
+    public void Hijack_keeps_the_file_mode()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        string path = Write("desktop.json", """{ "mcpServers": { "a": { "command": "x" } } }""");
+        File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        var client = ClientConfigScanner.Parse(ClientConfigScanner.ClaudeDesktop, path)!;
+        ClientConfigHijacker.Hijack(client, "/opt/Hubris", ["--stdio"]);
+        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(path));
     }
 
     [Fact]

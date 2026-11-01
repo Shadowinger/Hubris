@@ -27,7 +27,7 @@ public sealed class BridgeHost
         if (cachedTools is not null)
         {
             foreach (var def in cachedTools) _registry.Register(new BridgedTool(bridge, def));
-            _rt.Bridges.Add(bridge);
+            _rt.Bridges.Enqueue(bridge);
             Log.Info($"bridge '{spec.Name}' exposes {cachedTools.Count} tool(s) from cache; process not started");
             return bridge;
         }
@@ -36,7 +36,7 @@ public sealed class BridgeHost
         {
             var tools = await bridge.StartAsync(ct).ConfigureAwait(false);
             foreach (var def in tools) _registry.Register(new BridgedTool(bridge, def));
-            _rt.Bridges.Add(bridge);
+            _rt.Bridges.Enqueue(bridge);
             Log.Info($"bridge '{spec.Name}' exposes {tools.Count} tool(s)" + (bridge.ServerInfo is { } si ? $" ({si.Name} {si.Version})" : string.Empty));
             Cache(bridge, tools);
             return bridge;
@@ -57,11 +57,21 @@ public sealed class BridgeHost
         cache.Put(bridge.Name, ToolCacheStore.ComputeHash(bridge.Command, bridge.Args, bridge.Env.Keys), tools, tokens);
     }
 
-    /// <summary>Bridges from ~/.hubris/config.json that this hub does not run yet (by name).</summary>
-    public List<BridgeSpec> NewSpecsFromConfig()
+    /// <summary>Bridges from ~/.hubris/config.json that this hub does not run yet (by name), and names whose launch changed.</summary>
+    public (List<BridgeSpec> New, List<string> Stale) DiffConfig()
     {
         var specs = HubrisConfigFile.ToSpecs(HubrisConfigFile.Load());
-        specs.RemoveAll(s => _rt.Bridges.Exists(b => b.Name == s.Name));
-        return specs;
+        var running = _rt.Bridges.ToArray();
+        var fresh = new List<BridgeSpec>();
+        var stale = new List<string>();
+        foreach (var s in specs)
+        {
+            var b = Array.Find(running, x => x.Name == s.Name);
+            if (b is null) { fresh.Add(s); continue; }
+            bool same = b.Command == s.Command && b.Args.SequenceEqual(s.Args)
+                        && ToolCacheStore.ComputeHash("", [], b.Env.Keys) == ToolCacheStore.ComputeHash("", [], s.Env?.Keys ?? []);
+            if (!same) stale.Add(s.Name); // a changed launch only takes effect at the next hub start
+        }
+        return (fresh, stale);
     }
 }

@@ -92,10 +92,11 @@ public static partial class DangerPatterns
     ];
 }
 
-public readonly record struct SecurityVerdict(bool Allowed, string? Reason)
+/// <param name="PatternHit">The block came from a matched argument pattern, not from the tool's declared risk.</param>
+public readonly record struct SecurityVerdict(bool Allowed, string? Reason, bool PatternHit = false)
 {
     public static readonly SecurityVerdict Ok = new(true, null);
-    public static SecurityVerdict Blocked(string reason) => new(false, reason);
+    public static SecurityVerdict Blocked(string reason, bool patternHit = false) => new(false, reason, patternHit);
 }
 
 public sealed class SecurityInterceptor
@@ -156,6 +157,6 @@ public sealed class SecurityInterceptor
         Interlocked.Increment(ref _blocked);
         string matched = string.Join(", ", hits);
         Log.Warn($"blocked '{toolName}' in Safe mode: {matched}");
-        return SecurityVerdict.Blocked($"{BlockedPrefix} Tool='{toolName}' Risk={ModeNames.ToText(risk)} Matched: {matched}.");
+        return SecurityVerdict.Blocked($"{BlockedPrefix} Tool='{toolName}' Risk={ModeNames.ToText(risk)} Matched: {matched}.", patternHit: true);
     }
 }
