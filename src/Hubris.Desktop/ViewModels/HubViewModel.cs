@@ -27,6 +27,7 @@ public sealed class HubViewModel : ObservableObject
     private int _toolCount, _bridgeCount, _clients, _cacheSize, _cacheCapacity;
     private string _toolFilter = "";
     private EventRow? _selectedEvent;
+    private int _activeTools, _activeTokens, _totalTokens;
 
     public HubViewModel(HubClient client)
     {
@@ -87,6 +88,26 @@ public sealed class HubViewModel : ObservableObject
     public int BridgeCount { get => _bridgeCount; private set => Set(ref _bridgeCount, value); }
     public int Clients { get => _clients; private set => Set(ref _clients, value); }
     public string CacheFill => $"{_cacheSize}/{_cacheCapacity}";
+
+    // ---------------------------------------------------------------- context meter
+    public int ActiveTools => _activeTools;
+    public int ActiveTokens => _activeTokens;
+    public int TotalTokens => _totalTokens;
+    public int SavedPercent => _totalTokens == 0 ? 0 : (int)Math.Round(100.0 * (_totalTokens - _activeTokens) / _totalTokens);
+    public string ContextMeter => $"Active in context: {_activeTools} / {ToolCount} tools  (~{_activeTokens} tokens | {SavedPercent}% saved)";
+    public string ContextTile => $"~{_activeTokens} tok";
+    public string ContextTileSub => $"{_activeTools}/{ToolCount} tools · {SavedPercent}% saved";
+    public IBrush SavedBrush => SavedPercent >= 50 ? Palette.Ok : SavedPercent > 0 ? Palette.Warn : Palette.Muted;
+
+    private void ApplyContext(int? active, int? activeTok, int? totalTok)
+    {
+        if (active is null && activeTok is null && totalTok is null) return;
+        _activeTools = active ?? _activeTools;
+        _activeTokens = activeTok ?? _activeTokens;
+        _totalTokens = totalTok ?? _totalTokens;
+        Raise(nameof(ActiveTools)); Raise(nameof(ActiveTokens)); Raise(nameof(TotalTokens)); Raise(nameof(SavedPercent));
+        Raise(nameof(ContextMeter)); Raise(nameof(ContextTile)); Raise(nameof(ContextTileSub)); Raise(nameof(SavedBrush));
+    }
 
     // ---------------------------------------------------------------- collections
     public ObservableCollection<ApprovalViewModel> Approvals { get; } = new();
@@ -174,12 +195,21 @@ public sealed class HubViewModel : ObservableObject
         ToolCount = m.ToolCount ?? 0;
         BridgeCount = m.BridgeCount ?? 0;
         Clients = m.Clients ?? 0;
+        ApplyContext(m.ActiveTools, m.ActiveTokens, m.TotalTokens);
     }
 
     private void ReplaceTools(List<ToolInfo> tools)
     {
         Tools.Clear();
-        foreach (var t in tools) Tools.Add(new ToolRow(t, name => _client.RevealAsync(name)));
+        int active = 0, activeTok = 0, totalTok = 0;
+        foreach (var t in tools)
+        {
+            Tools.Add(new ToolRow(t, IsCompact, name => _client.RevealAsync(name), name => _client.LockAsync(name)));
+            totalTok += t.Tokens;
+            if (t.Visible) { active++; activeTok += t.Tokens; }
+        }
+        ToolCount = tools.Count;
+        ApplyContext(active, activeTok, totalTok);
         ApplyToolFilter();
     }
 
@@ -329,15 +359,21 @@ public sealed class EventRow
 
 public sealed class ToolRow : ObservableObject
 {
-    public ToolRow(ToolInfo t, Func<string, Task> reveal)
+    public ToolRow(ToolInfo t, bool hubCompact, Func<string, Task> reveal, Func<string, Task> lockTool)
     {
         Name = t.Name;
         Description = t.Description;
         Risk = t.Risk;
         Pinned = t.Pinned;
         Visible = t.Visible;
+        Unlocked = t.Unlocked;
+        Tokens = t.Tokens;
         Bridge = t.Bridge ?? "";
-        RevealCommand = new AsyncCommand(() => reveal(Name), () => !Visible);
+        // Only compact hubs hide anything, so only there does (un)locking change the client's context.
+        CanUnlock = hubCompact && !Visible;
+        CanLock = hubCompact && Unlocked && !Pinned;
+        RevealCommand = new AsyncCommand(() => reveal(Name), () => CanUnlock);
+        LockCommand = new AsyncCommand(() => lockTool(Name), () => CanLock);
     }
 
     public string Name { get; }
@@ -345,9 +381,15 @@ public sealed class ToolRow : ObservableObject
     public string Risk { get; }
     public bool Pinned { get; }
     public bool Visible { get; }
+    public bool Unlocked { get; }
+    public int Tokens { get; }
+    public string TokensText => $"~{Tokens} tok";
     public string Bridge { get; }
     public bool IsBridged => Bridge.Length > 0;
-    public string VisibilityText => Pinned ? "pinned" : Visible ? "unlocked" : "on-demand";
+    public bool CanUnlock { get; }
+    public bool CanLock { get; }
+    public string VisibilityText => Pinned ? "pinned" : Unlocked ? "unlocked" : Visible ? "listed" : "on-demand";
     public IBrush RiskBrush => Risk switch { "ReadOnly" => Palette.Ok, "Mutating" => Palette.Warn, _ => Palette.Error };
     public AsyncCommand RevealCommand { get; }
+    public AsyncCommand LockCommand { get; }
 }

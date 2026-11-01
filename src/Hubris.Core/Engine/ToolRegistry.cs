@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Hubris.Caching;
 using Hubris.Control;
@@ -76,6 +77,34 @@ public sealed class ToolRegistry
 
     public bool IsUnlocked(string name) => _unlocked.ContainsKey(name);
 
+    /// <summary>Hides an unlocked on-demand tool again (compact mode). Returns true if it was unlocked.</summary>
+    public bool Lock(string name) => _unlocked.TryRemove(name, out _);
+
+    /// <summary>Rough prompt cost of one tool definition as the client sees it: UTF-8 bytes of the minified JSON / 4.</summary>
+    public static int EstimateTokens(IMcpTool tool)
+    {
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(ToDefinition(tool), McpJsonContext.Default.ToolDefinition);
+        return Math.Max(1, (bytes.Length + 3) / 4);
+    }
+
+    public readonly record struct ContextStats(int ActiveTools, int TotalTools, int ActiveTokens, int TotalTokens)
+    {
+        public int SavedPercent => TotalTokens == 0 ? 0 : (int)Math.Round(100.0 * (TotalTokens - ActiveTokens) / TotalTokens);
+        public override string ToString() => $"{ActiveTools}/{TotalTools} tools ~{ActiveTokens} tok ({SavedPercent}% saved)";
+    }
+
+    public ContextStats GetContextStats()
+    {
+        int active = 0, total = 0, activeTok = 0, totalTok = 0;
+        foreach (var tool in _tools.Values)
+        {
+            int tok = EstimateTokens(tool);
+            total++; totalTok += tok;
+            if (IsVisible(tool)) { active++; activeTok += tok; }
+        }
+        return new ContextStats(active, total, activeTok, totalTok);
+    }
+
     public bool IsVisible(IMcpTool tool) => !CompactContext || tool.Pinned || _unlocked.ContainsKey(tool.Name);
 
     public List<ToolInfo> ToolInfos()
@@ -90,6 +119,8 @@ public sealed class ToolRegistry
                 Risk = ModeNames.ToText(tool.RiskLevel),
                 Pinned = tool.Pinned,
                 Visible = IsVisible(tool),
+                Unlocked = _unlocked.ContainsKey(tool.Name),
+                Tokens = EstimateTokens(tool),
                 Bridge = tool is IBridgedTool bt ? bt.BridgeName : null,
             });
         }

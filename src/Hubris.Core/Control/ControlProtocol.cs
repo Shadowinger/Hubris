@@ -34,6 +34,9 @@ public sealed class ControlMessage
     [JsonPropertyName("toolCount")] public int? ToolCount { get; set; }
     [JsonPropertyName("bridgeCount")] public int? BridgeCount { get; set; }
     [JsonPropertyName("pendingApprovals")] public int? PendingApprovals { get; set; }
+    [JsonPropertyName("activeTools")] public int? ActiveTools { get; set; }
+    [JsonPropertyName("activeTokens")] public int? ActiveTokens { get; set; }
+    [JsonPropertyName("totalTokens")] public int? TotalTokens { get; set; }
     [JsonPropertyName("clients")] public int? Clients { get; set; }
     [JsonPropertyName("tools")] public List<ToolInfo>? Tools { get; set; }
 
@@ -70,6 +73,8 @@ public sealed class ToolInfo
     [JsonPropertyName("risk")] public string Risk { get; set; } = string.Empty;
     [JsonPropertyName("pinned")] public bool Pinned { get; set; }
     [JsonPropertyName("visible")] public bool Visible { get; set; }
+    [JsonPropertyName("unlocked")] public bool Unlocked { get; set; }
+    [JsonPropertyName("tokens")] public int Tokens { get; set; }
     [JsonPropertyName("bridge")] public string? Bridge { get; set; }
 }
 
@@ -106,6 +111,7 @@ public static class ControlTypes
     public const string Approve = "approve";
     public const string Deny = "deny";
     public const string Reveal = "reveal";
+    public const string Lock = "lock";
     public const string ClearCache = "clear_cache";
     public const string Shutdown = "shutdown";
 }

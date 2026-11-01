@@ -199,6 +199,10 @@ public sealed class ControlHub : IAsyncDisposable
         m.BridgeCount = _rt.BridgeCount;
         m.PendingApprovals = Approvals.Count;
         m.Clients = Server.ClientCount;
+        var ctx = _registry.GetContextStats();
+        m.ActiveTools = ctx.ActiveTools;
+        m.ActiveTokens = ctx.ActiveTokens;
+        m.TotalTokens = ctx.TotalTokens;
     }
 
     private ControlMessage BuildHello()
@@ -256,6 +260,18 @@ public sealed class ControlHub : IAsyncDisposable
                     if (_registry.Unlock(cmd.Tool))
                     {
                         if (NotifyToolsChanged is { } notify) await notify().ConfigureAwait(false);
+                        await EmitToolsChangedAsync().ConfigureAwait(false);
+                    }
+                    break;
+
+                case ControlTypes.Lock:
+                    if (string.IsNullOrEmpty(cmd.Tool)) { Fail(ack, "tool required"); break; }
+                    if (!_registry.TryGet(cmd.Tool, out var lockTarget)) { Fail(ack, $"unknown tool '{cmd.Tool}'"); break; }
+                    if (lockTarget.Pinned) { Fail(ack, $"'{cmd.Tool}' is pinned and cannot be locked"); break; }
+                    if (_registry.Lock(cmd.Tool))
+                    {
+                        Log.Info($"'{cmd.Tool}' locked by control client {client.Id}");
+                        if (NotifyToolsChanged is { } notifyLock) await notifyLock().ConfigureAwait(false);
                         await EmitToolsChangedAsync().ConfigureAwait(false);
                     }
                     break;

@@ -91,6 +91,7 @@ public sealed class HubStatusTool : IMcpTool
         sb.Append(" gc=").Append(GC.CollectionCount(0)).Append('/').Append(GC.CollectionCount(1)).Append('/').Append(GC.CollectionCount(2));
         sb.Append(" tools=").Append(tools).Append(" (pinned ").Append(pinned).Append(", on-demand ").Append(tools - pinned).Append(", bridged ").Append(bridged).Append(')');
         sb.Append(" bridges=").Append(_rt.BridgeCount);
+        sb.Append(" context=").Append(reg.GetContextStats().ToString());
         sb.Append(" cache=hits ").Append(_rt.Cache.Hits).Append("/miss ").Append(_rt.Cache.Misses).Append(" size ").Append(_rt.Cache.Count).Append('/').Append(_rt.Cache.Capacity);
         sb.Append(" blocked=").Append(_rt.Security.BlockedCount);
         if (_rt.Control is { } ctl)

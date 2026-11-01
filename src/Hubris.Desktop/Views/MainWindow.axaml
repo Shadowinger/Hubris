@@ -125,6 +125,7 @@
                             <Border Classes="tile"><StackPanel><TextBlock Classes="label" Text="TOOLS" /><TextBlock Classes="value" Text="{Binding ToolCount}" /></StackPanel></Border>
                             <Border Classes="tile"><StackPanel><TextBlock Classes="label" Text="BRIDGES" /><TextBlock Classes="value" Text="{Binding BridgeCount}" /></StackPanel></Border>
                             <Border Classes="tile"><StackPanel><TextBlock Classes="label" Text="UI CLIENTS" /><TextBlock Classes="value" Text="{Binding Clients}" /></StackPanel></Border>
+                            <Border Classes="tile"><StackPanel><TextBlock Classes="label" Text="CONTEXT COST" /><TextBlock Classes="value" Text="{Binding ContextTile}" Foreground="{Binding SavedBrush}" /><TextBlock Classes="label" Text="{Binding ContextTileSub}" Margin="0,2,0,0" /></StackPanel></Border>
                         </WrapPanel>
 
                         <DockPanel Grid.Row="1" Margin="0,16,0,6">
@@ -160,20 +161,30 @@
                 </TabItem>
 
                 <TabItem Header="Tools">
-                    <Grid RowDefinitions="Auto,*" Margin="0,8,0,0">
-                        <TextBox Grid.Row="0" Text="{Binding ToolFilter}" PlaceholderText="Filter tools by name or description…" Margin="0,0,0,8" />
-                        <ListBox Grid.Row="1" ItemsSource="{Binding FilteredTools}">
+                    <Grid RowDefinitions="Auto,Auto,*" Margin="0,8,0,0">
+                        <Border Grid.Row="0" Classes="tile" Padding="12,8" Margin="0,0,0,8" HorizontalAlignment="Stretch">
+                            <DockPanel>
+                                <Border DockPanel.Dock="Right" Classes="badge" Background="{Binding SavedBrush}"><TextBlock Text="{Binding SavedPercent, StringFormat='{}{0}% saved'}" /></Border>
+                                <TextBlock Classes="mono" VerticalAlignment="Center" Text="{Binding ContextMeter}" />
+                            </DockPanel>
+                        </Border>
+                        <TextBox Grid.Row="1" Text="{Binding ToolFilter}" PlaceholderText="Filter tools by name or description…" Margin="0,0,0,8" />
+                        <ListBox Grid.Row="2" ItemsSource="{Binding FilteredTools}">
                             <ListBox.ItemTemplate>
                                 <DataTemplate x:DataType="vm:ToolRow">
-                                    <Grid ColumnDefinitions="*,Auto,Auto,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="10">
+                                    <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="10">
                                         <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Spacing="8">
                                             <TextBlock Classes="mono" FontWeight="SemiBold" Text="{Binding Name}" />
                                             <Border Classes="badge" Background="#30363D" IsVisible="{Binding IsBridged}"><TextBlock Text="{Binding Bridge}" /></Border>
                                         </StackPanel>
                                         <TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding Description}" FontSize="12" Opacity="0.75" TextWrapping="Wrap" />
-                                        <Border Grid.Row="0" Grid.RowSpan="2" Grid.Column="1" Classes="badge" Background="{Binding RiskBrush}"><TextBlock Text="{Binding Risk}" /></Border>
-                                        <TextBlock Grid.Row="0" Grid.RowSpan="2" Grid.Column="2" Classes="muted" VerticalAlignment="Center" Text="{Binding VisibilityText}" MinWidth="70" />
-                                        <Button Grid.Row="0" Grid.RowSpan="2" Grid.Column="3" Command="{Binding RevealCommand}" Content="Unlock" Padding="8,2" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Row="0" Grid.RowSpan="2" Grid.Column="1" Classes="muted mono" VerticalAlignment="Center" Text="{Binding TokensText}" MinWidth="64" TextAlignment="Right" />
+                                        <Border Grid.Row="0" Grid.RowSpan="2" Grid.Column="2" Classes="badge" Background="{Binding RiskBrush}"><TextBlock Text="{Binding Risk}" /></Border>
+                                        <TextBlock Grid.Row="0" Grid.RowSpan="2" Grid.Column="3" Classes="muted" VerticalAlignment="Center" Text="{Binding VisibilityText}" MinWidth="70" />
+                                        <Panel Grid.Row="0" Grid.RowSpan="2" Grid.Column="4" VerticalAlignment="Center" MinWidth="72">
+                                            <Button Command="{Binding RevealCommand}" Content="Unlock" Padding="8,2" IsVisible="{Binding CanUnlock}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
+                                            <Button Command="{Binding LockCommand}" Content="Lock" Padding="8,2" IsVisible="{Binding CanLock}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" ToolTip.Tip="Hide this tool from tools/list again to free context" />
+                                        </Panel>
                                     </Grid>
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
