@@ -287,7 +287,7 @@
                             <Button DockPanel.Dock="Right" Command="{Binding ScanClientsCommand}" Content="Scan" />
                             <StackPanel Spacing="2" VerticalAlignment="Center">
                                 <TextBlock Classes="title" Text="Detected client configs" />
-                                <TextBlock Classes="muted" FontSize="11" Text="MCP servers found in Claude Desktop, Claude Code, Cursor, Windsurf and the chosen VS Code workspace. Import turns them into bridges and leaves Hubris as the client's only server (backup kept)." />
+                                <TextBlock Classes="muted" FontSize="11" TextWrapping="Wrap" MaxWidth="700" Text="MCP servers found in Claude Desktop, Claude Code, Cursor, Windsurf and the chosen VS Code workspace. Import turns them into bridges and leaves Hubris as the client's only server (backup kept)." />
                             </StackPanel>
                         </DockPanel>
                         <TextBlock Classes="muted" FontSize="12" Text="No client configs found." IsVisible="{Binding NoClients}" />

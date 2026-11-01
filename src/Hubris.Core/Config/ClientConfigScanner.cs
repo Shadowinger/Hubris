@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Hubris.Cli;
 using Hubris.Transport;
 
 namespace Hubris.Config;
@@ -100,7 +101,13 @@ public static class ClientConfigScanner
         foreach (var kv in servers)
         {
             if (kv.Value is not JsonObject entry) continue;
-            if (IsHubrisEntry(kv.Key, entry)) { hubris = true; continue; }
+            if (IsHubrisEntry(kv.Key, entry))
+            {
+                hubris = true;
+                // Bridges still passed as --bridge arguments to Hubris itself belong in config.json: offer them for import.
+                list.AddRange(BridgesFromHubrisArgs(entry));
+                continue;
+            }
             string? command = entry["command"]?.GetValue<string>();
             if (string.IsNullOrWhiteSpace(command)) continue; // remote (url/type sse) servers cannot be bridged over stdio
             var server = new DetectedServer { Name = kv.Key, Command = command };
@@ -113,6 +120,17 @@ public static class ClientConfigScanner
             list.Add(server);
         }
         return new DetectedClient { Kind = kind, Path = path, Servers = list, HubrisPresent = hubris };
+    }
+
+    private static IEnumerable<DetectedServer> BridgesFromHubrisArgs(JsonObject entry)
+    {
+        if (entry["args"] is not JsonArray args) yield break;
+        var argv = new List<string>();
+        foreach (var a in args)
+            if (a is JsonValue v && v.TryGetValue<string>(out var s)) argv.Add(s);
+        if (!CliOptions.TryParse(argv.ToArray(), out var opts, out _)) yield break;
+        foreach (var b in opts.Bridges)
+            yield return new DetectedServer { Name = b.Name, Command = b.Command, Args = new List<string>(b.Args) };
     }
 
     /// <summary>Loop guard: never import an entry that would make Hubris spawn itself.</summary>

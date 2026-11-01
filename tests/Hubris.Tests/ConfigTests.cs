@@ -42,7 +42,7 @@ public class ConfigTests : IDisposable
               // JSONC is fine
               "mcpServers": {
                 "github": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"], "env": { "GITHUB_TOKEN": "t" } },
-                "hubris": { "command": "/opt/Hubris", "args": ["--stdio"] },
+                "hubris": { "command": "/opt/Hubris", "args": ["--stdio", "--compact", "--bridge=fs:npx", "-y", "server-fs", "/x"] },
                 "remote": { "url": "https://example.com/mcp" },
               }
             }
@@ -52,7 +52,8 @@ public class ConfigTests : IDisposable
 
         var clients = ClientConfigScanner.Scan(workspaceDir: null, home: _home, appData: _home);
         var desktop = Assert.Single(clients, c => c.Kind == ClientConfigScanner.ClaudeDesktop);
-        Assert.Equal(["github"], desktop.Servers.Select(s => s.Name));
+        Assert.Equal(["github", "fs"], desktop.Servers.Select(s => s.Name)); // fs comes from hubris's own --bridge args
+        Assert.Equal(["-y", "server-fs", "/x"], desktop.Servers[1].Args);
         Assert.True(desktop.HubrisPresent);
         Assert.False(desktop.IsGateway);
         Assert.Equal("t", desktop.Servers[0].Env["GITHUB_TOKEN"]);
