@@ -30,6 +30,7 @@ public sealed class ToolRegistry
 {
     private readonly ConcurrentDictionary<string, IMcpTool> _tools = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte> _unlocked = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, int> _tokens = new(StringComparer.Ordinal);
 
     public ToolRegistry(bool compactContext)
     {
@@ -46,7 +47,7 @@ public sealed class ToolRegistry
 
     public int BridgedCount
     {
-        get { int n = 0; foreach (var t in _tools.Values) if (t is IBridgedTool) n++; return n; }
+        get { int n = 0; foreach (var t in _tools.Values) if (t is BridgedTool) n++; return n; }
     }
 
     public IEnumerable<IMcpTool> All => _tools.Values;
@@ -58,17 +59,23 @@ public sealed class ToolRegistry
             Log.Warn($"duplicate tool '{tool.Name}' – replacing previous registration");
             _tools[tool.Name] = tool;
         }
+        _tokens[tool.Name] = EstimateTokens(tool); // definitions never change after registration
     }
-
-    public bool Unregister(string name) => _tools.TryRemove(name, out _);
 
     public int UnregisterWhere(Func<IMcpTool, bool> predicate)
     {
         int removed = 0;
         foreach (var kv in _tools)
-            if (predicate(kv.Value) && _tools.TryRemove(kv)) removed++;
+        {
+            if (!predicate(kv.Value) || !_tools.TryRemove(kv)) continue;
+            _tokens.TryRemove(kv.Key, out _);
+            _unlocked.TryRemove(kv.Key, out _);
+            removed++;
+        }
         return removed;
     }
+
+    public int TokensOf(IMcpTool tool) => _tokens.TryGetValue(tool.Name, out int t) ? t : EstimateTokens(tool);
 
     public bool TryGet(string name, out IMcpTool tool) => _tools.TryGetValue(name, out tool!);
 
@@ -98,7 +105,7 @@ public sealed class ToolRegistry
         int active = 0, total = 0, activeTok = 0, totalTok = 0;
         foreach (var tool in _tools.Values)
         {
-            int tok = EstimateTokens(tool);
+            int tok = TokensOf(tool);
             total++; totalTok += tok;
             if (IsVisible(tool)) { active++; activeTok += tok; }
         }
@@ -120,8 +127,8 @@ public sealed class ToolRegistry
                 Pinned = tool.Pinned,
                 Visible = IsVisible(tool),
                 Unlocked = _unlocked.ContainsKey(tool.Name),
-                Tokens = EstimateTokens(tool),
-                Bridge = tool is IBridgedTool bt ? bt.BridgeName : null,
+                Tokens = TokensOf(tool),
+                Bridge = tool is BridgedTool bt ? bt.BridgeName : null,
             });
         }
         list.Sort(static (a, b) => string.CompareOrdinal(a.Name, b.Name));
@@ -197,12 +204,6 @@ public sealed class ToolRegistry
         }
         return set;
     }
-}
-
-/// <summary>Marker so the registry can count/replace bridged tools without reflection.</summary>
-public interface IBridgedTool : IMcpTool
-{
-    string BridgeName { get; }
 }
 
 /// <summary>Strips schema noise (nulls, empty containers, documentation-only keys) before it costs tokens.</summary>

@@ -59,18 +59,33 @@ public static partial class DlpSanitizer
         s = Replace(BearerToken(), s, static _ => "Bearer " + Mask);
         s = Replace(Jwt(), s, static _ => "eyJ" + Mask + "." + Mask + "." + Mask);
         s = Replace(SlackToken(), s, static _ => "xox*-" + Mask);
-        s = Replace(RodneCislo(), s, static _ => "******/" + Mask);
+        s = Replace(RodneCislo(), s, static m => IsRodneCislo(m.Value) ? "******/" + Mask : m.Value);
 
         return s;
     }
 
-    private static string Replace(Regex regex, string input, MatchEvaluator evaluator)
+    /// <summary>10-digit numbers must pass the mod-11 rule; 9-digit (pre-1954) ones only count when written with a slash.</summary>
+    public static bool IsRodneCislo(string text)
     {
-        if (!regex.IsMatch(input)) return input;
-        int count = regex.Count(input);
-        Interlocked.Add(ref _redactions, count);
-        return regex.Replace(input, evaluator);
+        Span<char> digits = stackalloc char[10];
+        int n = 0;
+        foreach (char c in text)
+        {
+            if (!char.IsAsciiDigit(c)) continue;
+            if (n == 10) return false;
+            digits[n++] = c;
+        }
+        if (n == 10) return long.Parse(digits, System.Globalization.CultureInfo.InvariantCulture) % 11 == 0;
+        return n == 9 && text.Contains('/');
     }
+
+    private static string Replace(Regex regex, string input, MatchEvaluator evaluator)
+        => regex.Replace(input, m =>
+        {
+            string r = evaluator(m);
+            if (!string.Equals(r, m.Value, StringComparison.Ordinal)) Interlocked.Increment(ref _redactions);
+            return r;
+        });
 
     public static CallToolResult Sanitize(CallToolResult result)
     {

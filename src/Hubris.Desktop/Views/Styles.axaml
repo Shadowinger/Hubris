@@ -65,7 +65,4 @@
         <Setter Property="Foreground" Value="White" />
         <Setter Property="FontWeight" Value="SemiBold" />
     </Style>
-    <Style Selector="ListBoxItem.hub">
-        <Setter Property="Padding" Value="10,8" />
-    </Style>
 </Styles>

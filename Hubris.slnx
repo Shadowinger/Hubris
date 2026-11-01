@@ -4,4 +4,7 @@
     <Project Path="src/Hubris.Desktop/Hubris.Desktop.csproj" />
     <Project Path="src/Hubris/Hubris.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Hubris.Tests/Hubris.Tests.csproj" />
+  </Folder>
 </Solution>

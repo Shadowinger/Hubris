@@ -10,14 +10,11 @@ namespace Hubris.Desktop.Services;
 /// <summary>Connection to one running hub over its control socket. Events are delivered on a background thread.</summary>
 public sealed class HubClient : IAsyncDisposable
 {
-    private static readonly JsonWriterOptions WriterOptions = new() { Indented = false, SkipValidation = true };
-
     private readonly string _socketPath;
     private readonly Socket _socket;
     private NetworkStream? _stream;
     private PipeReader? _reader;
-    private PipeWriter? _writer;
-    private readonly SemaphoreSlim _writeLock = new(1, 1);
+    private JsonLineWriter? _writer;
     private readonly CancellationTokenSource _lifetime = new();
     private Task? _readLoop;
     private long _reqSeq;
@@ -41,35 +38,27 @@ public sealed class HubClient : IAsyncDisposable
         await _socket.ConnectAsync(new UnixDomainSocketEndPoint(_socketPath), ct).ConfigureAwait(false);
         _stream = new NetworkStream(_socket, ownsSocket: true);
         _reader = PipeReader.Create(_stream, new StreamPipeReaderOptions(leaveOpen: true));
-        _writer = PipeWriter.Create(_stream, new StreamPipeWriterOptions(leaveOpen: true));
+        _writer = new JsonLineWriter(PipeWriter.Create(_stream, new StreamPipeWriterOptions(leaveOpen: true)));
         _readLoop = Task.Run(() => ReadLoopAsync(_lifetime.Token), CancellationToken.None);
     }
 
     private async Task ReadLoopAsync(CancellationToken ct)
     {
-        var reader = _reader!;
         try
         {
-            while (!ct.IsCancellationRequested)
+            await JsonLines.ReadLoopAsync(_reader!, line =>
             {
-                ReadResult result = await reader.ReadAsync(ct).ConfigureAwait(false);
-                ReadOnlySequence<byte> buffer = result.Buffer;
-                while (LineFramer.TryReadLine(ref buffer, out var line))
+                ControlMessage? msg = null;
+                try
                 {
-                    ControlMessage? msg = null;
-                    try
-                    {
-                        var r = new Utf8JsonReader(line, isFinalBlock: true, state: default);
-                        msg = JsonSerializer.Deserialize(ref r, ControlJsonContext.Default.ControlMessage);
-                    }
-                    catch (JsonException) { }
-                    if (msg is not null) MessageReceived?.Invoke(this, msg);
+                    var r = new Utf8JsonReader(line, isFinalBlock: true, state: default);
+                    msg = JsonSerializer.Deserialize(ref r, ControlJsonContext.Default.ControlMessage);
                 }
-                if (result.IsCompleted) { reader.AdvanceTo(buffer.End); break; }
-                reader.AdvanceTo(buffer.Start, buffer.End);
-            }
+                catch (JsonException) { }
+                if (msg is not null) MessageReceived?.Invoke(this, msg);
+                return ValueTask.CompletedTask;
+            }, ct).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) { }
         catch (Exception ex) when (ex is IOException or SocketException or ObjectDisposedException) { }
         finally
         {
@@ -84,6 +73,7 @@ public sealed class HubClient : IAsyncDisposable
     public Task LockAsync(string tool) => SendAsync(new ControlMessage { Type = ControlTypes.Lock, Tool = tool });
     public Task ClearCacheAsync() => SendAsync(new ControlMessage { Type = ControlTypes.ClearCache });
     public Task RequestStatusAsync() => SendAsync(new ControlMessage { Type = ControlTypes.GetStatus });
+    public Task RequestToolsAsync() => SendAsync(new ControlMessage { Type = ControlTypes.ListTools });
     public Task ShutdownHubAsync() => SendAsync(new ControlMessage { Type = ControlTypes.Shutdown });
 
     private async Task SendAsync(ControlMessage msg)
@@ -91,20 +81,11 @@ public sealed class HubClient : IAsyncDisposable
         var writer = _writer;
         if (writer is null || _lifetime.IsCancellationRequested) return;
         msg.ReqId = Interlocked.Increment(ref _reqSeq);
-        await _writeLock.WaitAsync().ConfigureAwait(false);
         try
         {
-            using (var json = new Utf8JsonWriter(writer, WriterOptions))
-                JsonSerializer.Serialize(json, msg, ControlJsonContext.Default.ControlMessage);
-            writer.GetSpan(1)[0] = (byte)'\n';
-            writer.Advance(1);
-            await writer.FlushAsync(_lifetime.Token).ConfigureAwait(false);
+            await writer.WriteAsync(w => JsonSerializer.Serialize(w, msg, ControlJsonContext.Default.ControlMessage), _lifetime.Token).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is IOException or SocketException or ObjectDisposedException or OperationCanceledException) { }
-        finally
-        {
-            _writeLock.Release();
-        }
     }
 
     public async ValueTask DisposeAsync()
@@ -112,12 +93,11 @@ public sealed class HubClient : IAsyncDisposable
         if (_lifetime.IsCancellationRequested) return;
         _lifetime.Cancel();
         try { _socket.Shutdown(SocketShutdown.Both); } catch (Exception) { }
-        if (_writer is not null) { try { await _writer.CompleteAsync().ConfigureAwait(false); } catch (Exception) { } }
+        if (_writer is not null) await _writer.DisposeAsync().ConfigureAwait(false);
         if (_reader is not null) { try { await _reader.CompleteAsync().ConfigureAwait(false); } catch (Exception) { } }
         if (_readLoop is not null) { try { await _readLoop.ConfigureAwait(false); } catch (Exception) { } }
         _stream?.Dispose();
         _socket.Dispose();
-        _writeLock.Dispose();
         _lifetime.Dispose();
     }
 }

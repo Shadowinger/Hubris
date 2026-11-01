@@ -40,8 +40,6 @@ public sealed class HubViewModel : ObservableObject
         _mode = client.Descriptor.Mode;
         _isBypass = _mode == "Bypass";
 
-        SetSafeCommand = new AsyncCommand(() => _client.SetModeAsync("safe"));
-        SetBypassCommand = new AsyncCommand(() => _client.SetModeAsync("bypass"));
         ClearCacheCommand = new AsyncCommand(() => _client.ClearCacheAsync());
         ClearEventsCommand = new RelayCommand(() => Events.Clear());
         ShutdownCommand = new AsyncCommand(() => _client.ShutdownHubAsync());
@@ -120,8 +118,6 @@ public sealed class HubViewModel : ObservableObject
     public string ToolFilter { get => _toolFilter; set { if (Set(ref _toolFilter, value)) ApplyToolFilter(); } }
 
     // ---------------------------------------------------------------- commands
-    public AsyncCommand SetSafeCommand { get; }
-    public AsyncCommand SetBypassCommand { get; }
     public AsyncCommand ClearCacheCommand { get; }
     public RelayCommand ClearEventsCommand { get; }
     public AsyncCommand ShutdownCommand { get; }

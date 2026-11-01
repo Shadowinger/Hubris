@@ -272,6 +272,44 @@ public sealed class FsReadHeadTool : IMcpTool
         ("lines", SchemaBuilder.Integer("Number of lines to return", 1, 2000, 50), false),
         ("maxLineLength", SchemaBuilder.Integer("Truncate lines longer than this many characters", 16, 10000, 400), false));
 
+    /// <summary>
+    /// Reads at most <paramref name="lines"/> lines, each cut at <paramref name="maxLen"/> chars, and never more than
+    /// lines × (maxLen + 1) characters in total – so a single 50 MB line or an endless device cannot pull everything into memory.
+    /// </summary>
+    public static async Task<(string Text, int Lines, bool More)> ReadHeadAsync(TextReader reader, int lines, int maxLen, CancellationToken ct)
+    {
+        long budget = (long)lines * (maxLen + 1);
+        var sb = new StringBuilder((int)Math.Min(budget, 64 * 1024));
+        char[] buf = new char[8192];
+        int count = 0, lineLen = 0;
+        bool truncated = false, more = false, atLineStart = true;
+
+        while (count < lines)
+        {
+            int n = await reader.ReadAsync(buf.AsMemory(), ct).ConfigureAwait(false);
+            if (n == 0) break;
+            for (int i = 0; i < n; i++)
+            {
+                char c = buf[i];
+                if (c == '\r') continue;
+                if (c == '\n')
+                {
+                    if (truncated) sb.Append('…');
+                    sb.Append('\n');
+                    count++; lineLen = 0; truncated = false; atLineStart = true;
+                    if (count == lines) { more = i + 1 < n || reader.Peek() >= 0; return (sb.ToString(), count, more); }
+                    continue;
+                }
+                atLineStart = false;
+                if (lineLen < maxLen) sb.Append(c); else truncated = true;
+                lineLen++;
+                if (--budget <= 0) { sb.Append('…').Append('\n'); return (sb.ToString(), count + 1, true); }
+            }
+        }
+        if (!atLineStart) { if (truncated) sb.Append('…'); sb.Append('\n'); count++; }
+        return (sb.ToString(), count, more);
+    }
+
     public async ValueTask<CallToolResult> ExecuteAsync(JsonObject? arguments, CancellationToken ct)
     {
         string? rawPath = ArgReader.GetString(arguments, "path");
@@ -290,9 +328,10 @@ public sealed class FsReadHeadTool : IMcpTool
         try
         {
             await using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 16 * 1024, FileOptions.SequentialScan | FileOptions.Asynchronous);
+            if (!fs.CanSeek) return CallToolResult.Error($"Not a regular file: {path}");
 
-            // Binary sniff on the first 8 KiB.
-            byte[] probe = new byte[Math.Min(8192, (int)Math.Min(fs.Length, int.MaxValue))];
+            // Binary sniff on the first 8 KiB (fixed size: devices report Length 0 but still produce bytes).
+            byte[] probe = new byte[8192];
             int read = 0;
             while (read < probe.Length)
             {
@@ -305,27 +344,10 @@ public sealed class FsReadHeadTool : IMcpTool
             fs.Position = 0;
 
             using var reader = new StreamReader(fs, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, bufferSize: 16 * 1024, leaveOpen: true);
-            var sb = new StringBuilder(Math.Min(lines * 80, 64 * 1024));
-            int count = 0;
-            bool more = false;
-            while (count < lines)
-            {
-                string? line = await reader.ReadLineAsync(ct).ConfigureAwait(false);
-                if (line is null) break;
-                count++;
-                if (line.Length > maxLen)
-                    sb.Append(line, 0, maxLen).Append('…');
-                else
-                    sb.Append(line);
-                sb.Append('\n');
-            }
-            if (count == lines)
-            {
-                more = (await reader.ReadLineAsync(ct).ConfigureAwait(false)) is not null;
-            }
+            var (text, count, more) = await ReadHeadAsync(reader, lines, maxLen, ct).ConfigureAwait(false);
 
             string header = $"# {path} ({count}{(more ? "+" : "")} lines, {fs.Length} bytes)\n";
-            return CallToolResult.Text(DlpSanitizer.Sanitize(header + sb));
+            return CallToolResult.Text(DlpSanitizer.Sanitize(header + text));
         }
         catch (UnauthorizedAccessException) { return CallToolResult.Error($"Access denied: {path}"); }
         catch (IOException ex) { return CallToolResult.Error($"I/O error: {ex.Message}"); }

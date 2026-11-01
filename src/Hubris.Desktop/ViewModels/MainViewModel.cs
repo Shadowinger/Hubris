@@ -57,6 +57,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private void OnHubConnected(HubClient client)
     {
         client.MessageReceived += OnMessage;
+        // The hub's hello may already have passed before we subscribed; ask again, ReplaceTools makes it idempotent.
+        _ = client.RequestToolsAsync();
+        _ = client.RequestStatusAsync();
         Dispatcher.UIThread.Post(() =>
         {
             var vm = new HubViewModel(client);

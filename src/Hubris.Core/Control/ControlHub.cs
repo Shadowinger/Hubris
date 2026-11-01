@@ -34,6 +34,8 @@ public sealed class ControlHub : IAsyncDisposable
         Approvals = new ApprovalGate();
         Server = new ControlServer(HubrisPaths.SocketPath(Environment.ProcessId), OnCommandAsync, OnConnectedAsync);
         Approvals.Requested += p => Server.Broadcast(ApprovalRequestMessage(p));
+        // Nobody left to click Approve: fail the waiting calls now instead of after the full timeout.
+        Server.ClientCountChanged += n => { if (n == 0) Approvals.CancelAll(); };
         Approvals.Resolved += (p, d) => Server.Broadcast(new ControlMessage
         {
             Type = ControlTypes.ApprovalResolved,
@@ -138,12 +140,6 @@ public sealed class ControlHub : IAsyncDisposable
     public ValueTask EmitToolsChangedAsync() => Server.HasClients ? Server.BroadcastAsync(ToolsChangedMessage()) : ValueTask.CompletedTask;
 
     private ControlMessage ToolsChangedMessage() => new() { Type = ControlTypes.ToolsChanged, Timestamp = DateTime.UtcNow.ToString("O"), Tools = _registry.ToolInfos() };
-
-    public void EmitLog(string level, string text)
-    {
-        if (!Server.HasClients) return;
-        Server.Broadcast(new ControlMessage { Type = ControlTypes.Log, Timestamp = DateTime.UtcNow.ToString("O"), Level = level, Text = text });
-    }
 
     private static string? Preview(CallToolResult? result)
     {

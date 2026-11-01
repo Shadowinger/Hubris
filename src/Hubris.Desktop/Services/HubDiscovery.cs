@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net.Sockets;
 using System.Text.Json;
 using Hubris.Control;
 
@@ -67,6 +68,14 @@ public sealed class HubDiscovery : IAsyncDisposable
                 using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 connectCts.CancelAfter(TimeSpan.FromSeconds(2));
                 await client.ConnectAsync(connectCts.Token).ConfigureAwait(false);
+            }
+            catch (SocketException)
+            {
+                // Nobody listens there: the PID was reused by another process. Forget the hub for good.
+                await client.DisposeAsync().ConfigureAwait(false);
+                TryDelete(path);
+                TryDelete(d.Socket);
+                continue;
             }
             catch (Exception)
             {

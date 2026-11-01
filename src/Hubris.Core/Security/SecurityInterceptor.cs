@@ -117,10 +117,11 @@ public sealed class SecurityInterceptor
     }
     public long BlockedCount => Interlocked.Read(ref _blocked);
 
-    public SecurityVerdict Evaluate(string toolName, ToolRiskLevel risk, JsonObject? arguments)
+    /// <param name="bridged">A bridge's own readOnlyHint is not trusted: its arguments are still scanned.</param>
+    public SecurityVerdict Evaluate(string toolName, ToolRiskLevel risk, JsonObject? arguments, bool bridged = false)
     {
         if (Mode == ExecutionMode.Bypass) return SecurityVerdict.Ok;
-        if (risk == ToolRiskLevel.ReadOnly) return SecurityVerdict.Ok;
+        if (risk == ToolRiskLevel.ReadOnly && !bridged) return SecurityVerdict.Ok;
 
         if (risk == ToolRiskLevel.Destructive)
         {
@@ -145,6 +146,6 @@ public sealed class SecurityInterceptor
         Interlocked.Increment(ref _blocked);
         string matched = string.Join(", ", hits);
         Log.Warn($"blocked '{toolName}' in Safe mode: {matched}");
-        return SecurityVerdict.Blocked($"{BlockedPrefix} Tool='{toolName}' Risk=Mutating Matched: {matched}.");
+        return SecurityVerdict.Blocked($"{BlockedPrefix} Tool='{toolName}' Risk={ModeNames.ToText(risk)} Matched: {matched}.");
     }
 }

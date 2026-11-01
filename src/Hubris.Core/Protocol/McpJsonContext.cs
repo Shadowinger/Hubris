@@ -20,7 +20,6 @@ namespace Hubris.Protocol;
 [JsonSerializable(typeof(ToolAnnotations))]
 [JsonSerializable(typeof(ToolDefinition))]
 [JsonSerializable(typeof(List<ToolDefinition>))]
-[JsonSerializable(typeof(ListToolsParams))]
 [JsonSerializable(typeof(ListToolsResult))]
 [JsonSerializable(typeof(CallToolParams))]
 [JsonSerializable(typeof(CallToolResult))]

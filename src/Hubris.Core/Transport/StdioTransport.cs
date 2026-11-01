@@ -7,23 +7,12 @@ using Hubris.Protocol;
 
 namespace Hubris.Transport;
 
-/// <summary>
-/// Pipelines-based stdio transport. Reads newline-delimited JSON-RPC frames from stdin and writes
-/// frames to stdout under a semaphore so concurrent handlers never interleave bytes.
-/// </summary>
+/// <summary>JSON-RPC over stdin/stdout. Nothing but frames ever reaches stdout; diagnostics go through <see cref="Log"/>.</summary>
 public sealed class StdioTransport : IAsyncDisposable
 {
     private readonly PipeReader _reader;
-    private readonly PipeWriter _writer;
-    private readonly SemaphoreSlim _writeLock = new(1, 1);
-    private Utf8JsonWriter? _json;
-    private bool _disposed;
-
-    private static readonly JsonWriterOptions WriterOptions = new()
-    {
-        Indented = false,
-        SkipValidation = true,
-    };
+    private readonly JsonLineWriter _writer;
+    private volatile bool _closed;
 
     public StdioTransport()
         : this(Console.OpenStandardInput(), Console.OpenStandardOutput())
@@ -33,54 +22,21 @@ public sealed class StdioTransport : IAsyncDisposable
     public StdioTransport(Stream input, Stream output)
     {
         _reader = PipeReader.Create(input, new StreamPipeReaderOptions(bufferSize: 64 * 1024, minimumReadSize: 4096, leaveOpen: false));
-        _writer = PipeWriter.Create(output, new StreamPipeWriterOptions(minimumBufferSize: 16 * 1024, leaveOpen: false));
+        _writer = new JsonLineWriter(PipeWriter.Create(output, new StreamPipeWriterOptions(minimumBufferSize: 16 * 1024, leaveOpen: false)));
     }
 
     // ---------------------------------------------------------------- read side
 
-    public async Task RunReadLoopAsync(Func<JsonRpcMessage, ValueTask> onMessage, CancellationToken ct)
-    {
-        try
-        {
-            while (!ct.IsCancellationRequested)
-            {
-                ReadResult result = await _reader.ReadAsync(ct).ConfigureAwait(false);
-                ReadOnlySequence<byte> buffer = result.Buffer;
-
-                while (LineFramer.TryReadLine(ref buffer, out ReadOnlySequence<byte> line))
-                {
-                    await DispatchLineAsync(line, onMessage).ConfigureAwait(false);
-                }
-
-                if (result.IsCompleted)
-                {
-                    // Trailing frame without newline (client closed pipe mid-line).
-                    var tail = LineFramer.TrimCr(buffer);
-                    if (tail.Length > 0)
-                        await DispatchLineAsync(tail, onMessage).ConfigureAwait(false);
-                    _reader.AdvanceTo(result.Buffer.End);
-                    break;
-                }
-
-                _reader.AdvanceTo(buffer.Start, buffer.End);
-            }
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            // graceful shutdown
-        }
-        finally
-        {
-            await _reader.CompleteAsync().ConfigureAwait(false);
-        }
-    }
+    public Task RunReadLoopAsync(Func<JsonRpcMessage, ValueTask> onMessage, CancellationToken ct)
+        => JsonLines.ReadLoopAsync(_reader, line => DispatchLineAsync(line, onMessage), ct);
 
     private async ValueTask DispatchLineAsync(ReadOnlySequence<byte> line, Func<JsonRpcMessage, ValueTask> onMessage)
     {
         JsonRpcMessage? msg;
         try
         {
-            msg = Parse(in line);
+            var reader = new Utf8JsonReader(line, isFinalBlock: true, state: default);
+            msg = JsonSerializer.Deserialize(ref reader, McpJsonContext.Default.JsonRpcMessage);
         }
         catch (JsonException ex)
         {
@@ -95,14 +51,17 @@ public sealed class StdioTransport : IAsyncDisposable
             return;
         }
 
-        await onMessage(msg).ConfigureAwait(false);
-    }
-
-    private static JsonRpcMessage? Parse(in ReadOnlySequence<byte> line)
-    {
-        // Utf8JsonReader consumes the sequence directly; no string / array materialisation.
-        var reader = new Utf8JsonReader(line, isFinalBlock: true, state: default);
-        return JsonSerializer.Deserialize(ref reader, McpJsonContext.Default.JsonRpcMessage);
+        // A handler bug must never take the read loop (and the whole hub) down with it.
+        try
+        {
+            await onMessage(msg).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"{msg.Method ?? "response"} id={msg.Id} handler failed: {ex.Message}");
+            if (!msg.Id.IsNone && msg.Method is not null)
+                await SendErrorAsync(msg.Id, JsonRpcErrorCodes.InternalError, $"{ex.GetType().Name}: {ex.Message}").ConfigureAwait(false);
+        }
     }
 
     // ---------------------------------------------------------------- write side
@@ -116,19 +75,6 @@ public sealed class StdioTransport : IAsyncDisposable
             id.WriteTo(w);
             w.WritePropertyName("result"u8);
             JsonSerializer.Serialize(w, value, typeInfo);
-            w.WriteEndObject();
-        }, ct);
-
-    public ValueTask SendResultNodeAsync(RpcId id, JsonNode? result, CancellationToken ct = default)
-        => WriteFrameAsync(w =>
-        {
-            w.WriteStartObject();
-            w.WriteString("jsonrpc"u8, "2.0"u8);
-            w.WritePropertyName("id"u8);
-            id.WriteTo(w);
-            w.WritePropertyName("result"u8);
-            if (result is null) w.WriteStartObject(); else result.WriteTo(w);
-            if (result is null) w.WriteEndObject();
             w.WriteEndObject();
         }, ct);
 
@@ -166,55 +112,24 @@ public sealed class StdioTransport : IAsyncDisposable
             w.WriteEndObject();
         }, ct);
 
-    public ValueTask SendRawAsync(JsonNode node, CancellationToken ct = default)
-        => WriteFrameAsync(w => node.WriteTo(w), ct);
-
     private async ValueTask WriteFrameAsync(Action<Utf8JsonWriter> write, CancellationToken ct)
     {
-        if (_disposed) return;
-        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+        if (_closed) return;
         try
         {
-            if (_disposed) return;
-            var json = _json;
-            if (json is null)
-            {
-                json = new Utf8JsonWriter(_writer, WriterOptions);
-                _json = json;
-            }
-            else
-            {
-                json.Reset(_writer);
-            }
-
-            write(json);
-            json.Flush();
-
-            Span<byte> nl = _writer.GetSpan(1);
-            nl[0] = (byte)'\n';
-            _writer.Advance(1);
-
-            FlushResult fr = await _writer.FlushAsync(ct).ConfigureAwait(false);
-            if (fr.IsCompleted) _disposed = true; // stdout gone (client exited)
+            if (!await _writer.WriteAsync(write, ct).ConfigureAwait(false)) _closed = true; // client closed stdout
         }
         catch (IOException ex)
         {
             Log.Warn($"stdout write failed: {ex.Message}");
-            _disposed = true;
-        }
-        finally
-        {
-            _writeLock.Release();
+            _closed = true;
         }
     }
 
     public async ValueTask DisposeAsync()
     {
-        if (_disposed) { _json?.Dispose(); return; }
-        _disposed = true;
-        try { await _writer.CompleteAsync().ConfigureAwait(false); } catch (Exception ex) { Log.Debug($"writer complete: {ex.Message}"); }
+        _closed = true;
+        await _writer.DisposeAsync().ConfigureAwait(false);
         try { await _reader.CompleteAsync().ConfigureAwait(false); } catch (Exception ex) { Log.Debug($"reader complete: {ex.Message}"); }
-        _json?.Dispose();
-        _writeLock.Dispose();
     }
 }

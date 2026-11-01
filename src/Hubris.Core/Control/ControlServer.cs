@@ -9,13 +9,10 @@ namespace Hubris.Control;
 /// <summary>One connected UI client: framed JSON lines over a socket stream with a private write lock.</summary>
 public sealed class ControlClient : IAsyncDisposable
 {
-    private static readonly JsonWriterOptions WriterOptions = new() { Indented = false, SkipValidation = true };
-
     private readonly Socket _socket;
     private readonly NetworkStream _stream;
     private readonly PipeReader _reader;
-    private readonly PipeWriter _writer;
-    private readonly SemaphoreSlim _writeLock = new(1, 1);
+    private readonly JsonLineWriter _writer;
     private int _closed;
 
     internal ControlClient(Socket socket, int id)
@@ -23,35 +20,25 @@ public sealed class ControlClient : IAsyncDisposable
         _socket = socket;
         _stream = new NetworkStream(socket, ownsSocket: true);
         _reader = PipeReader.Create(_stream, new StreamPipeReaderOptions(leaveOpen: true));
-        _writer = PipeWriter.Create(_stream, new StreamPipeWriterOptions(leaveOpen: true));
+        _writer = new JsonLineWriter(PipeWriter.Create(_stream, new StreamPipeWriterOptions(leaveOpen: true)));
         Id = id;
     }
 
     public int Id { get; }
     public bool IsClosed => Volatile.Read(ref _closed) == 1;
 
+    /// <summary>Cancellation propagates so a broadcast can give up on a client that stopped reading.</summary>
     public async ValueTask SendAsync(ControlMessage message, CancellationToken ct = default)
     {
         if (IsClosed) return;
-        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            if (IsClosed) return;
-            using (var json = new Utf8JsonWriter(_writer, WriterOptions))
-            {
-                JsonSerializer.Serialize(json, message, ControlJsonContext.Default.ControlMessage);
-            }
-            _writer.GetSpan(1)[0] = (byte)'\n';
-            _writer.Advance(1);
-            await _writer.FlushAsync(ct).ConfigureAwait(false);
+            if (!await _writer.WriteAsync(w => JsonSerializer.Serialize(w, message, ControlJsonContext.Default.ControlMessage), ct).ConfigureAwait(false))
+                Abort();
         }
         catch (Exception ex) when (ex is IOException or SocketException or ObjectDisposedException)
         {
-            Volatile.Write(ref _closed, 1);
-        }
-        finally
-        {
-            _writeLock.Release();
+            Abort();
         }
     }
 
@@ -59,29 +46,21 @@ public sealed class ControlClient : IAsyncDisposable
     {
         try
         {
-            while (!ct.IsCancellationRequested)
+            await JsonLines.ReadLoopAsync(_reader, async line =>
             {
-                ReadResult result = await _reader.ReadAsync(ct).ConfigureAwait(false);
-                ReadOnlySequence<byte> buffer = result.Buffer;
-                while (LineFramer.TryReadLine(ref buffer, out var line))
+                ControlMessage? msg = null;
+                try
                 {
-                    ControlMessage? msg = null;
-                    try
-                    {
-                        var r = new Utf8JsonReader(line, isFinalBlock: true, state: default);
-                        msg = JsonSerializer.Deserialize(ref r, ControlJsonContext.Default.ControlMessage);
-                    }
-                    catch (JsonException ex)
-                    {
-                        Log.Warn($"control client {Id}: bad frame: {ex.Message}");
-                    }
-                    if (msg is not null) await onMessage(this, msg).ConfigureAwait(false);
+                    var r = new Utf8JsonReader(line, isFinalBlock: true, state: default);
+                    msg = JsonSerializer.Deserialize(ref r, ControlJsonContext.Default.ControlMessage);
                 }
-                if (result.IsCompleted) { _reader.AdvanceTo(buffer.End); break; }
-                _reader.AdvanceTo(buffer.Start, buffer.End);
-            }
+                catch (JsonException ex)
+                {
+                    Log.Warn($"control client {Id}: bad frame: {ex.Message}");
+                }
+                if (msg is not null) await onMessage(this, msg).ConfigureAwait(false);
+            }, ct).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) { }
         catch (Exception ex) when (ex is IOException or SocketException or ObjectDisposedException)
         {
             Log.Debug($"control client {Id} dropped: {ex.Message}");
@@ -92,14 +71,20 @@ public sealed class ControlClient : IAsyncDisposable
         }
     }
 
+    /// <summary>Closes the socket so the read loop ends and the server forgets this client.</summary>
+    internal void Abort()
+    {
+        if (Interlocked.Exchange(ref _closed, 1) == 1) return;
+        try { _socket.Shutdown(SocketShutdown.Both); } catch (Exception ex) { Log.Debug($"control client {Id} shutdown: {ex.Message}"); }
+        try { _socket.Close(); } catch (Exception ex) { Log.Debug($"control client {Id} close: {ex.Message}"); }
+    }
+
     public async ValueTask DisposeAsync()
     {
-        Volatile.Write(ref _closed, 1);
-        try { await _writer.CompleteAsync().ConfigureAwait(false); } catch (Exception ex) { Log.Debug($"control client {Id} writer: {ex.Message}"); }
+        Abort();
+        await _writer.DisposeAsync().ConfigureAwait(false);
         try { await _reader.CompleteAsync().ConfigureAwait(false); } catch (Exception ex) { Log.Debug($"control client {Id} reader: {ex.Message}"); }
-        try { _socket.Shutdown(SocketShutdown.Both); } catch (Exception ex) { Log.Debug($"control client {Id} shutdown: {ex.Message}"); }
         await _stream.DisposeAsync().ConfigureAwait(false);
-        _writeLock.Dispose();
     }
 }
 
@@ -193,7 +178,17 @@ public sealed class ControlServer : IAsyncDisposable
         ControlClient[] snapshot;
         lock (_gate) { if (_clients.Count == 0) return; snapshot = _clients.ToArray(); }
         foreach (var c in snapshot)
-            await c.SendAsync(message, _lifetime.Token).ConfigureAwait(false);
+        {
+            // A UI that stopped reading must not stall every other client.
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+            cts.CancelAfter(TimeSpan.FromSeconds(2));
+            try { await c.SendAsync(message, cts.Token).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (!_lifetime.IsCancellationRequested)
+            {
+                Log.Warn($"control client {c.Id} is not reading; dropping it");
+                c.Abort();
+            }
+        }
     }
 
     /// <summary>Fire-and-forget broadcast for hot paths; never throws into the caller.</summary>

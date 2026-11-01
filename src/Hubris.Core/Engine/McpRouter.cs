@@ -34,7 +34,7 @@ public sealed class McpRouter
         _runtime = runtime;
         _bridges = bridges;
         _control = control;
-        foreach (var b in bridges) b.ToolsChanged += OnBridgeToolsChanged;
+        foreach (var b in bridges) { b.ToolsChanged += OnBridgeToolsChanged; b.Exited += OnBridgeExited; }
 
         if (registry.TryGet(ExecuteToolMetaTool.ToolName, out var proxy) && proxy is ExecuteToolMetaTool exec)
             exec.Invoker = (name, args, ct) => InvokeToolAsync(name, args, ct, viaProxy: true);
@@ -100,14 +100,13 @@ public sealed class McpRouter
                 Log.Debug("client initialized");
                 break;
             case "notifications/cancelled":
-                if (msg.Params is not null)
+                CancelledParams? p = null;
+                try { if (msg.Params is not null) p = JsonSerializer.Deserialize(msg.Params, McpJsonContext.Default.CancelledParams); }
+                catch (JsonException ex) { Log.Warn($"ignoring malformed notifications/cancelled: {ex.Message}"); }
+                if (p is not null && _inflight.TryGetValue(p.RequestId, out var cts))
                 {
-                    var p = JsonSerializer.Deserialize(msg.Params, McpJsonContext.Default.CancelledParams);
-                    if (p is not null && _inflight.TryGetValue(p.RequestId, out var cts))
-                    {
-                        Log.Debug($"cancelling {p.RequestId}: {p.Reason}");
-                        try { cts.Cancel(); } catch (ObjectDisposedException) { }
-                    }
+                    Log.Debug($"cancelling {p.RequestId}: {p.Reason}");
+                    try { cts.Cancel(); } catch (ObjectDisposedException) { }
                 }
                 break;
             default:
@@ -222,7 +221,8 @@ public sealed class McpRouter
             return CallToolResult.Error($"Unknown tool '{name}'. Use {SearchToolsMetaTool.ToolName} to discover available tools.");
 
         string outcome = "ok";
-        var verdict = _security.Evaluate(tool.Name, tool.RiskLevel, args);
+        bool bridged = tool is BridgedTool;
+        var verdict = _security.Evaluate(tool.Name, tool.RiskLevel, args, bridged);
         if (!verdict.Allowed)
         {
             string reason = verdict.Reason ?? SecurityInterceptor.BlockedPrefix;
@@ -236,7 +236,7 @@ public sealed class McpRouter
                     {
                         ApprovalDecision.Denied => "Denied by the user in the Hubris desktop app.",
                         ApprovalDecision.TimedOut => $"No decision within {_control.ApprovalTimeout.TotalSeconds:0}s.",
-                        _ => "Request cancelled.",
+                        _ => "Request cancelled (UI disconnected or call aborted).",
                     };
                     var denied = CallToolResult.Error($"{reason} {why}");
                     _control.EmitToolCall(callId, tool.Name, tool.RiskLevel, ApprovalGate.DecisionText(decision), 0, args, denied);
@@ -253,8 +253,8 @@ public sealed class McpRouter
             }
         }
 
-        bool isMeta = tool is IUnlockingTool;
-        bool cacheable = tool.RiskLevel == ToolRiskLevel.ReadOnly && !isMeta && outcome == "ok";
+        // Local tools answer in microseconds and read live state (git, files): caching them only serves stale data.
+        bool cacheable = bridged && tool.RiskLevel == ToolRiskLevel.ReadOnly && outcome == "ok";
         FastLruCache.CacheKey key = default;
         if (cacheable)
         {
@@ -321,17 +321,28 @@ public sealed class McpRouter
             try
             {
                 var tools = await bridge.ListToolsAsync(_shutdown.Token).ConfigureAwait(false);
-                _registry.UnregisterWhere(t => t is IBridgedTool bt && string.Equals(bt.BridgeName, bridge.Name, StringComparison.Ordinal));
-                foreach (var def in tools) _registry.Register(new BridgedTool(bridge, def));
-                Log.Info($"bridge '{bridge.Name}' tools refreshed: {tools.Count}");
-                if (_initialized) await SendToolsListChangedAsync().ConfigureAwait(false);
-                _control?.EmitToolsChanged();
+                await ReplaceBridgeToolsAsync(bridge, tools).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
                 Log.Warn($"bridge '{bridge.Name}' tool refresh failed: {ex.Message}");
             }
         }, CancellationToken.None);
+    }
+
+    /// <summary>A dead bridge must not keep advertising tools that can only fail.</summary>
+    private void OnBridgeExited(ExternalMcpBridge bridge)
+    {
+        _ = Task.Run(() => ReplaceBridgeToolsAsync(bridge, []), CancellationToken.None);
+    }
+
+    private async Task ReplaceBridgeToolsAsync(ExternalMcpBridge bridge, List<ToolDefinition> tools)
+    {
+        _registry.UnregisterWhere(t => t is BridgedTool bt && string.Equals(bt.BridgeName, bridge.Name, StringComparison.Ordinal));
+        foreach (var def in tools) _registry.Register(new BridgedTool(bridge, def));
+        Log.Info($"bridge '{bridge.Name}' now exposes {tools.Count} tool(s)");
+        if (_initialized) await SendToolsListChangedAsync().ConfigureAwait(false);
+        _control?.EmitToolsChanged();
     }
 
     // ------------------------------------------------------------------ shutdown
@@ -357,6 +368,6 @@ public sealed class McpRouter
         while (!_inflight.IsEmpty && DateTime.UtcNow < deadline)
             await Task.Delay(20).ConfigureAwait(false);
 
-        foreach (var b in _bridges) b.ToolsChanged -= OnBridgeToolsChanged;
+        foreach (var b in _bridges) { b.ToolsChanged -= OnBridgeToolsChanged; b.Exited -= OnBridgeExited; }
     }
 }

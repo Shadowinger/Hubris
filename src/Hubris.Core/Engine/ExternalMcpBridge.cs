@@ -24,19 +24,15 @@ public sealed class McpBridgeException : Exception
 /// </summary>
 public sealed class ExternalMcpBridge : IAsyncDisposable
 {
-    private static readonly JsonWriterOptions WriterOptions = new() { Indented = false, SkipValidation = true };
-
     private readonly string _command;
     private readonly IReadOnlyList<string> _args;
     private readonly string? _cwd;
     private readonly ConcurrentDictionary<RpcId, TaskCompletionSource<JsonNode?>> _pending = new();
-    private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly CancellationTokenSource _lifetime = new();
 
     private Process? _process;
-    private PipeWriter? _stdin;
+    private JsonLineWriter? _stdin;
     private PipeReader? _stdout;
-    private Utf8JsonWriter? _json;
     private Task? _readLoop;
     private Task? _errLoop;
     private long _nextId;
@@ -57,6 +53,8 @@ public sealed class ExternalMcpBridge : IAsyncDisposable
 
     /// <summary>Raised when the child announces notifications/tools/list_changed.</summary>
     public event Action<ExternalMcpBridge>? ToolsChanged;
+    /// <summary>Raised when the child process dies on its own (not on dispose).</summary>
+    public event Action<ExternalMcpBridge>? Exited;
 
     // ------------------------------------------------------------------ lifecycle
 
@@ -81,7 +79,7 @@ public sealed class ExternalMcpBridge : IAsyncDisposable
         process.Start();
         _process = process;
 
-        _stdin = PipeWriter.Create(process.StandardInput.BaseStream, new StreamPipeWriterOptions(leaveOpen: false));
+        _stdin = new JsonLineWriter(PipeWriter.Create(process.StandardInput.BaseStream, new StreamPipeWriterOptions(leaveOpen: false)));
         _stdout = PipeReader.Create(process.StandardOutput.BaseStream, new StreamPipeReaderOptions(bufferSize: 64 * 1024, leaveOpen: false));
         _readLoop = Task.Run(() => ReadLoopAsync(_lifetime.Token), CancellationToken.None);
         _errLoop = Task.Run(() => PumpStderrAsync(process.StandardError, _lifetime.Token), CancellationToken.None);
@@ -252,59 +250,24 @@ public sealed class ExternalMcpBridge : IAsyncDisposable
     private async ValueTask WriteFrameAsync(Action<Utf8JsonWriter> write, CancellationToken ct)
     {
         var stdin = _stdin ?? throw new McpBridgeException(JsonRpcErrorCodes.InternalError, $"bridge '{Name}' not started");
-        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
-        try
-        {
-            if (Volatile.Read(ref _disposed) == 1) throw new McpBridgeException(JsonRpcErrorCodes.InternalError, $"bridge '{Name}' disposed");
-            var json = _json;
-            if (json is null) { json = new Utf8JsonWriter(stdin, WriterOptions); _json = json; }
-            else json.Reset(stdin);
-
-            write(json);
-            json.Flush();
-            stdin.GetSpan(1)[0] = (byte)'\n';
-            stdin.Advance(1);
-            await stdin.FlushAsync(ct).ConfigureAwait(false);
-        }
-        finally
-        {
-            _writeLock.Release();
-        }
+        if (Volatile.Read(ref _disposed) == 1) throw new McpBridgeException(JsonRpcErrorCodes.InternalError, $"bridge '{Name}' disposed");
+        await stdin.WriteAsync(write, ct).ConfigureAwait(false);
     }
 
     // ------------------------------------------------------------------ inbound
 
     private async Task ReadLoopAsync(CancellationToken ct)
     {
-        var reader = _stdout!;
         try
         {
-            while (!ct.IsCancellationRequested)
-            {
-                ReadResult result = await reader.ReadAsync(ct).ConfigureAwait(false);
-                ReadOnlySequence<byte> buffer = result.Buffer;
-
-                while (LineFramer.TryReadLine(ref buffer, out var line))
-                    await HandleInboundAsync(line).ConfigureAwait(false);
-
-                if (result.IsCompleted)
-                {
-                    var tail = LineFramer.TrimCr(buffer);
-                    if (tail.Length > 0) await HandleInboundAsync(tail).ConfigureAwait(false);
-                    reader.AdvanceTo(result.Buffer.End);
-                    break;
-                }
-                reader.AdvanceTo(buffer.Start, buffer.End);
-            }
+            await JsonLines.ReadLoopAsync(_stdout!, HandleInboundAsync, ct).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             Log.Warn($"bridge '{Name}' read loop ended: {ex.Message}");
         }
         finally
         {
-            await reader.CompleteAsync().ConfigureAwait(false);
             FailAllPending($"bridge '{Name}' stdout closed");
         }
     }
@@ -384,8 +347,12 @@ public sealed class ExternalMcpBridge : IAsyncDisposable
     {
         int code = -1;
         try { code = _process?.ExitCode ?? -1; } catch (InvalidOperationException) { }
-        if (Volatile.Read(ref _disposed) == 0) Log.Warn($"bridge '{Name}' exited with code {code}");
         FailAllPending($"bridge '{Name}' exited with code {code}");
+        if (Volatile.Read(ref _disposed) == 0)
+        {
+            Log.Warn($"bridge '{Name}' exited with code {code}");
+            Exited?.Invoke(this);
+        }
     }
 
     private void FailAllPending(string reason)
@@ -406,7 +373,7 @@ public sealed class ExternalMcpBridge : IAsyncDisposable
         if (process is not null)
         {
             // Polite EOF first so well-behaved servers exit on their own.
-            try { if (_stdin is not null) await _stdin.CompleteAsync().ConfigureAwait(false); } catch (Exception ex) { Log.Debug($"bridge '{Name}' stdin close: {ex.Message}"); }
+            if (_stdin is not null) await _stdin.DisposeAsync().ConfigureAwait(false);
 
             try
             {
@@ -435,16 +402,14 @@ public sealed class ExternalMcpBridge : IAsyncDisposable
         if (_readLoop is not null) { try { await _readLoop.ConfigureAwait(false); } catch (Exception ex) { Log.Debug($"bridge '{Name}' read loop: {ex.Message}"); } }
         if (_errLoop is not null) { try { await _errLoop.ConfigureAwait(false); } catch (Exception ex) { Log.Debug($"bridge '{Name}' err loop: {ex.Message}"); } }
 
-        _json?.Dispose();
         process?.Dispose();
-        _writeLock.Dispose();
         _lifetime.Dispose();
         Log.Info($"bridge '{Name}' stopped");
     }
 }
 
 /// <summary>Registry-facing adapter for one remote tool.</summary>
-public sealed class BridgedTool : IBridgedTool
+public sealed class BridgedTool : IMcpTool
 {
     private readonly ExternalMcpBridge _bridge;
     private readonly string _remoteName;

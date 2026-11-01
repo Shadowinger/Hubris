@@ -77,6 +77,10 @@ public static class AutoInstaller
             JsonObject root;
             if (File.Exists(path))
             {
+                // JsonNode cannot preserve comments (VS Code's mcp.json is JSONC), so the original is always kept.
+                File.Copy(path, path + ".bak", overwrite: true);
+                Log.Info($"previous config kept at {path}.bak");
+
                 JsonNode? parsed = null;
                 try
                 {
@@ -85,20 +89,9 @@ public static class AutoInstaller
                 }
                 catch (JsonException ex)
                 {
-                    Log.Warn($"{path} is not valid JSON ({ex.Message}); backing it up");
+                    Log.Warn($"{path} is not valid JSON ({ex.Message}); starting from an empty document");
                 }
-
-                if (parsed is JsonObject existing)
-                {
-                    root = existing;
-                }
-                else
-                {
-                    string backup = path + ".bak-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
-                    File.Copy(path, backup, overwrite: true);
-                    Log.Warn($"existing config saved to {backup}");
-                    root = new JsonObject();
-                }
+                root = parsed as JsonObject ?? new JsonObject();
             }
             else
             {

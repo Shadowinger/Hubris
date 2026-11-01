@@ -16,10 +16,6 @@ public sealed class JsonRpcMessage
     [JsonPropertyName("params")] public JsonNode? Params { get; set; }
     [JsonPropertyName("result")] public JsonNode? Result { get; set; }
     [JsonPropertyName("error")] public JsonRpcError? Error { get; set; }
-
-    [JsonIgnore] public bool IsNotification => Method is not null && Id.IsNone;
-    [JsonIgnore] public bool IsRequest => Method is not null && !Id.IsNone;
-    [JsonIgnore] public bool IsResponse => Method is null && (Result is not null || Error is not null);
 }
 
 public sealed class JsonRpcError
@@ -99,11 +95,6 @@ public sealed class ToolDefinition
     [JsonPropertyName("description")] public string? Description { get; set; }
     [JsonPropertyName("inputSchema")] public JsonObject? InputSchema { get; set; }
     [JsonPropertyName("annotations")] public ToolAnnotations? Annotations { get; set; }
-}
-
-public sealed class ListToolsParams
-{
-    [JsonPropertyName("cursor")] public string? Cursor { get; set; }
 }
 
 public sealed class ListToolsResult
