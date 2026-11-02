@@ -365,10 +365,14 @@ public sealed class ControlHub : IAsyncDisposable
                     if (cmd.Type == ControlTypes.OAuthRevoke) { provider.Revoke(); break; }
                     if (provider.State == "pending") { Fail(ack, "login already in progress"); break; }
                     // The browser round trip takes as long as the user does; the ack says it started, oauth_changed says how it ended.
+                    string bridgeName = cmd.Bridge;
                     _ = Task.Run(async () =>
                     {
                         try { await provider.LoginAsync(_lifetime.Token).ConfigureAwait(false); }
-                        catch (Hubris.Auth.OAuthException) { /* logged and carried in the state */ }
+                        catch (Hubris.Auth.OAuthException) { return; /* logged and carried in the state */ }
+                        // Signed in: the bridge that was waiting (or whose tools are stale) is listed now.
+                        foreach (var b in _rt.Bridges)
+                            if (b.Name == bridgeName) await RefreshBridgeAsync(b).ConfigureAwait(false);
                     }, CancellationToken.None);
                     ack.Text = "browser opened";
                     break;
@@ -398,24 +402,26 @@ public sealed class ControlHub : IAsyncDisposable
     /// <summary>Drops this hub's cache entries, (re)starts every bridge, lists its tools again and recaches them.</summary>
     private async Task RefreshBridgesAsync()
     {
-        foreach (var bridge in _rt.Bridges)
+        foreach (var bridge in _rt.Bridges) await RefreshBridgeAsync(bridge).ConfigureAwait(false);
+    }
+
+    private async Task RefreshBridgeAsync(McpBridge bridge)
+    {
+        _rt.ToolCache?.Invalidate(bridge.Name);
+        if (bridge.IsStarted && !bridge.IsAlive && !bridge.CanRestart)
         {
-            _rt.ToolCache?.Invalidate(bridge.Name);
-            if (bridge.IsStarted && !bridge.IsAlive && !bridge.CanRestart)
-            {
-                Log.Warn($"bridge '{bridge.Name}' has exited; restart the hub to bring it back");
-                continue;
-            }
-            try
-            {
-                var tools = await bridge.StartAsync(_lifetime.Token).ConfigureAwait(false);
-                if (ReplaceBridgeTools is { } replace) await replace(bridge, tools).ConfigureAwait(false);
-                _bridgeHost.Cache(bridge, tools);
-            }
-            catch (Exception ex)
-            {
-                Log.Warn($"bridge '{bridge.Name}' refresh failed: {ex.Message}");
-            }
+            Log.Warn($"bridge '{bridge.Name}' has exited; restart the hub to bring it back");
+            return;
+        }
+        try
+        {
+            var tools = await bridge.StartAsync(_lifetime.Token).ConfigureAwait(false);
+            if (ReplaceBridgeTools is { } replace) await replace(bridge, tools).ConfigureAwait(false);
+            _bridgeHost.Cache(bridge, tools);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"bridge '{bridge.Name}' refresh failed: {ex.Message}");
         }
     }
 

@@ -14,6 +14,12 @@ public class McpBridgeException : Exception
     public int Code { get; }
 }
 
+/// <summary>The bridge has an auth block but no token yet: not a failure, the user has to press Connect.</summary>
+public sealed class NotSignedInException : McpBridgeException
+{
+    public NotSignedInException(string bridge) : base(JsonRpcErrorCodes.InternalError, $"bridge '{bridge}' is not signed in: press Connect in the Hubris desktop app") { }
+}
+
 /// <summary>
 /// One external MCP server seen from the hub: tools are listed through it and calls are forwarded to it.
 /// The transport (child process over stdio, remote server over HTTP) is the subclass's business; the JSON-RPC

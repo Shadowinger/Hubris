@@ -188,8 +188,7 @@ public sealed class OAuthDelegatingHandler : DelegatingHandler
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
-        string token = await _provider.GetAccessTokenAsync(ct).ConfigureAwait(false)
-                       ?? throw new Engine.McpBridgeException(Protocol.JsonRpcErrorCodes.InternalError, $"bridge '{_provider.Bridge}' is not signed in: press Connect in the Hubris desktop app");
+        string token = await _provider.GetAccessTokenAsync(ct).ConfigureAwait(false) ?? throw new Engine.NotSignedInException(_provider.Bridge);
         request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
         var response = await base.SendAsync(request, ct).ConfigureAwait(false);
         if (response.StatusCode != System.Net.HttpStatusCode.Unauthorized) return response;

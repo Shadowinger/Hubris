@@ -194,7 +194,7 @@ public class AuthTests : IDisposable
     {
         var (provider, world, _) = Build();
         using var http = new HttpClient(new OAuthDelegatingHandler(provider, world));
-        var ex = await Assert.ThrowsAsync<McpBridgeException>(() => http.GetAsync("https://mcp.test/mcp"));
+        var ex = await Assert.ThrowsAsync<NotSignedInException>(() => http.GetAsync("https://mcp.test/mcp"));
         Assert.Contains("Connect", ex.Message);
         Assert.Equal(0, world.ResourceCalls);
     }
@@ -243,6 +243,24 @@ public class AuthTests : IDisposable
         }
         Assert.Null(store.Get(account));
         store.Delete(account); // deleting twice is fine
+    }
+
+    [Fact]
+    public async Task Unsigned_oauth_bridge_stays_registered_without_tools()
+    {
+        var registry = new ToolRegistry(compactContext: true);
+        var rt = new HubRuntime
+        {
+            Uptime = System.Diagnostics.Stopwatch.StartNew(), CompactContext = true, Registry = registry,
+            Security = new Hubris.Security.SecurityInterceptor(Hubris.Security.ExecutionMode.Safe),
+            Auth = new OAuthManager(new CountingStore()),
+        };
+        var bridge = await new BridgeHost(rt, registry).AddAsync(Remote, CancellationToken.None);
+        Assert.NotNull(bridge);
+        Assert.Single(rt.Bridges);
+        Assert.False(bridge.IsStarted);
+        Assert.Equal(0, registry.BridgedCount);
+        Assert.Equal("none", rt.Auth.Infos()[0].State);
     }
 
     [Fact]

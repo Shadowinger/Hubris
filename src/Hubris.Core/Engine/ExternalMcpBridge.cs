@@ -92,8 +92,7 @@ public sealed class ExternalMcpBridge : McpBridge
         foreach (var kv in Env) psi.Environment[kv.Key] = kv.Value;
         if (TokenSource is { } tokens && Spec.Auth?.Env is { } envName)
         {
-            string token = await tokens(ct, false).ConfigureAwait(false)
-                           ?? throw new McpBridgeException(JsonRpcErrorCodes.InternalError, $"bridge '{Name}' is not signed in: press Connect in the Hubris desktop app");
+            string token = await tokens(ct, false).ConfigureAwait(false) ?? throw new NotSignedInException(Name);
             psi.Environment[envName] = token; // shortcut: a token that expires while the child runs is not re-injected; restart the hub or Clear cache
         }
         if (!string.IsNullOrEmpty(_cwd)) psi.WorkingDirectory = _cwd;

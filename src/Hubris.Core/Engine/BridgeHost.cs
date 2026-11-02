@@ -46,6 +46,13 @@ public sealed class BridgeHost
             Cache(bridge, tools);
             return bridge;
         }
+        catch (NotSignedInException)
+        {
+            // Keep it, without tools: after Connect the control hub lists it (RefreshBridgeAsync).
+            _rt.Bridges.Enqueue(bridge);
+            Log.Warn($"bridge '{spec.Name}' waits for sign-in; its tools appear after Connect in the desktop app");
+            return bridge;
+        }
         catch (Exception ex)
         {
             Log.Warn($"bridge '{spec.Name}' failed to start: {ex.Message}");
