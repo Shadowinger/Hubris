@@ -10,6 +10,7 @@ namespace Hubris.Protocol;
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     GenerationMode = JsonSourceGenerationMode.Default)]
 [JsonSerializable(typeof(JsonRpcMessage))]
+[JsonSerializable(typeof(List<JsonRpcMessage>))]
 [JsonSerializable(typeof(JsonRpcError))]
 [JsonSerializable(typeof(RpcId))]
 [JsonSerializable(typeof(Implementation))]

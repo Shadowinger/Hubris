@@ -3,7 +3,22 @@ using Hubris.Security;
 
 namespace Hubris.Cli;
 
-public sealed record BridgeSpec(string Name, string Command, IReadOnlyList<string> Args, IReadOnlyDictionary<string, string>? Env = null);
+/// <summary>
+/// How to reach one external MCP server: a command to spawn (stdio), or a <paramref name="Url"/> to talk to over HTTP.
+/// <paramref name="Transport"/> is "http" (Streamable HTTP, default for a url) or "sse" (the older HTTP+SSE pair).
+/// </summary>
+public sealed record BridgeSpec(
+    string Name, string Command, IReadOnlyList<string> Args, IReadOnlyDictionary<string, string>? Env = null,
+    string? Url = null, IReadOnlyDictionary<string, string>? Headers = null, string? Transport = null)
+{
+    public bool IsRemote => !string.IsNullOrEmpty(Url);
+    public string TransportName => IsRemote ? (string.Equals(Transport, "sse", StringComparison.OrdinalIgnoreCase) ? "sse" : "http") : "stdio";
+
+    /// <summary>What identifies the launch for the tool cache: command+args+env names, or url+transport+header names (values may rotate).</summary>
+    public string ConfigHash() => IsRemote
+        ? Hubris.Caching.ToolCacheStore.ComputeHash(Url!, [TransportName], Headers?.Keys ?? [])
+        : Hubris.Caching.ToolCacheStore.ComputeHash(Command, Args, Env?.Keys ?? []);
+}
 
 public sealed class CliOptions
 {
@@ -34,8 +49,16 @@ public sealed class CliOptions
         if (ApprovalTimeoutSec != 120) list.Add($"--approval-timeout={ApprovalTimeoutSec.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
         foreach (var b in Bridges)
         {
-            list.Add($"--bridge={b.Name}:{b.Command}");
-            list.AddRange(b.Args);
+            if (b.IsRemote)
+            {
+                list.Add($"--bridge={b.Name}:{(b.TransportName == "sse" ? "sse:" : string.Empty)}{b.Url}");
+                if (b.Headers is not null) foreach (var h in b.Headers) list.Add($"{h.Key}: {h.Value}");
+            }
+            else
+            {
+                list.Add($"--bridge={b.Name}:{b.Command}");
+                list.AddRange(b.Args);
+            }
         }
         return list;
     }
@@ -111,6 +134,24 @@ public sealed class CliOptions
                 var bridgeArgs = new List<string>();
                 while (i + 1 < args.Length && !IsOwnOption(args[i + 1]))
                     bridgeArgs.Add(args[++i]);
+
+                // --bridge=api:https://host/mcp  or  --bridge=api:sse:https://host/sse, followed by "Header: value" pairs
+                string? transport = null;
+                string target = command;
+                if (target.StartsWith("sse:", StringComparison.OrdinalIgnoreCase)) { transport = "sse"; target = target[4..]; }
+                if (target.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || target.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!Uri.TryCreate(target, UriKind.Absolute, out _)) { error = $"invalid bridge url '{target}'"; return false; }
+                    var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var h in bridgeArgs)
+                    {
+                        int sep = h.IndexOf(':');
+                        if (sep <= 0) { error = $"remote bridge '{name}': expected 'Header: value', got '{h}'"; return false; }
+                        headers[h[..sep].Trim()] = h[(sep + 1)..].Trim();
+                    }
+                    options.Bridges.Add(new BridgeSpec(name, string.Empty, [], null, target, headers.Count == 0 ? null : headers, transport ?? "http"));
+                    continue;
+                }
                 options.Bridges.Add(new BridgeSpec(name, command, bridgeArgs));
                 continue;
             }
@@ -149,6 +190,7 @@ public sealed class CliOptions
             "  --mode=bypass      execute every tool call without policy checks\n" +
             "  --compact          list only core tools; others are discoverable via mcp_search_tools\n" +
             "  --bridge=n:cmd     spawn an external stdio MCP server; its tools appear as n__<tool>\n" +
+            "  --bridge=n:URL     remote MCP server over Streamable HTTP (sse:URL for HTTP+SSE); 'Header: value' args follow\n" +
             "  --verbose          debug logging on stderr\n" +
             "  --no-control       do not open the local control socket (no desktop UI, no approvals)\n" +
             "  --no-cache         always spawn bridges at startup instead of using the SQLite tool cache\n" +

@@ -13,9 +13,48 @@ public sealed class BridgeConfig
     [JsonPropertyName("command")] public string Command { get; set; } = string.Empty;
     [JsonPropertyName("args")] public List<string> Args { get; set; } = new();
     [JsonPropertyName("env")] public Dictionary<string, string>? Env { get; set; }
+    /// <summary>Remote server: its endpoint. <see cref="Command"/> is then empty.</summary>
+    [JsonPropertyName("url")] public string? Url { get; set; }
+    [JsonPropertyName("headers")] public Dictionary<string, string>? Headers { get; set; }
+    /// <summary>"http" (Streamable HTTP, default for a url) or "sse".</summary>
+    [JsonPropertyName("transport")] public string? Transport { get; set; }
     [JsonPropertyName("source")] public string? Source { get; set; }
 
-    public BridgeSpec ToSpec() => new(Name, Command, Args, Env);
+    public bool IsRemote => !string.IsNullOrWhiteSpace(Url);
+
+    /// <summary>Env and header values may say <c>${NAME}</c>; those are read from the hub's environment at start.</summary>
+    public BridgeSpec ToSpec() => new(Name, Command ?? string.Empty, Args, EnvExpander.Expand(Env), Url, EnvExpander.Expand(Headers), Transport);
+}
+
+public static class EnvExpander
+{
+    public static Dictionary<string, string>? Expand(Dictionary<string, string>? values)
+    {
+        if (values is null || values.Count == 0) return values;
+        var result = new Dictionary<string, string>(values.Count, values.Comparer);
+        foreach (var kv in values) result[kv.Key] = Expand(kv.Value);
+        return result;
+    }
+
+    public static string Expand(string value)
+    {
+        int start = value.IndexOf("${", StringComparison.Ordinal);
+        if (start < 0) return value;
+        var sb = new System.Text.StringBuilder(value.Length);
+        int pos = 0;
+        while (start >= 0)
+        {
+            int end = value.IndexOf('}', start + 2);
+            if (end < 0) break;
+            sb.Append(value, pos, start - pos);
+            string name = value[(start + 2)..end];
+            sb.Append(Environment.GetEnvironmentVariable(name) ?? value[start..(end + 1)]); // unknown: left as written
+            pos = end + 1;
+            start = value.IndexOf("${", pos, StringComparison.Ordinal);
+        }
+        sb.Append(value, pos, value.Length - pos);
+        return sb.ToString();
+    }
 }
 
 /// <summary>~/.hubris/config.json – the one place bridges live; clients only point at the Hubris binary.</summary>
@@ -62,7 +101,7 @@ public static class HubrisConfigFile
     {
         var list = new List<BridgeSpec>(config.Bridges.Count);
         foreach (var b in config.Bridges)
-            if (!string.IsNullOrWhiteSpace(b.Name) && !string.IsNullOrWhiteSpace(b.Command)) list.Add(b.ToSpec());
+            if (!string.IsNullOrWhiteSpace(b.Name) && (!string.IsNullOrWhiteSpace(b.Command) || b.IsRemote)) list.Add(b.ToSpec());
         return list;
     }
 }

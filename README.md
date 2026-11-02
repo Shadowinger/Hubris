@@ -1,9 +1,10 @@
 # Hubris
 
 MCP gateway. One stdio server that sits between an MCP client (Claude Desktop, Claude Code, Cursor, VS Code)
-and all the MCP servers you actually use. It caches their tool definitions so they don't have to be spawned
-at startup, keeps most of their tools out of the model's context until they are needed, blocks destructive
-calls in Safe mode and asks you in a desktop app before letting them through.
+and all the MCP servers you actually use, local child processes and remote (HTTP) servers alike. It caches
+their tool definitions so nothing has to be spawned or connected at startup, keeps most of their tools out of
+the model's context until they are needed, blocks destructive calls in Safe mode and asks you in a desktop app
+before letting them through.
 
 .NET 10, Native AOT, no reflection, no runtime to install. A desktop app (Avalonia) does configuration,
 takeover of existing client configs, live call view and approvals.
@@ -31,7 +32,7 @@ searched for and unlocked 10 bridged tools; the rest stayed off the list.
 ```
 client ──stdio──▶ Hubris ──stdio──▶ bridge 1 (npx …)
                     │    ──stdio──▶ bridge 2
-                    │    ──stdio──▶ …
+                    │    ──https──▶ bridge 3 (remote MCP server, Streamable HTTP or SSE)
                     └──unix socket──▶ Hubris.Desktop (approvals, dashboard, config)
 ```
 
@@ -40,8 +41,15 @@ client ──stdio──▶ Hubris ──stdio──▶ bridge 1 (npx …)
   and it calls them directly or through `mcp_execute_tool {toolName, arguments}`. `Lock` in the desktop app
   puts them away again.
 - **Tool cache.** Bridge tool definitions are stored in `~/.hubris/cache.db` keyed by command, args and env
-  key names, with a TTL (`--cache-ttl`, default 24 h). On the next start the definitions are served from the
-  cache and the child process is only started on the first real call to one of its tools.
+  key names (url, transport and header names for a remote server), with a TTL (`--cache-ttl`, default 24 h).
+  On the next start the definitions are served from the cache; the child process is only started, or the
+  remote session only opened, on the first real call to one of its tools.
+- **Remote servers.** A bridge with a `url` instead of a `command` is reached over HTTP: Streamable HTTP
+  (POST per message, JSON or event-stream answers, `Mcp-Session-Id`) by default, the older HTTP+SSE pair with
+  `"transport": "sse"`. Headers from the config go on every request, so a bearer token or API key works;
+  an expired session is reopened on the next call, and the server's tools stay listed in between.
+  Interactive OAuth login is not implemented: a server that answers 401 fails the call with a hint to add
+  a header.
 - **Safe mode.** Tools are classified read-only / mutating / destructive from their annotations and names.
   Read-only calls pass, mutating calls have their arguments scanned for things like `rm -rf`, `DROP TABLE`,
   `git push --force`, destructive calls are blocked. A blocked call waits for Approve / Deny in the desktop app
@@ -51,8 +59,8 @@ client ──stdio──▶ Hubris ──stdio──▶ bridge 1 (npx …)
   and the values are masked before they reach the model.
 - **Takeover.** The desktop app scans the MCP configs of Claude Desktop, Claude Code (including per-project
   entries in `~/.claude.json`), Cursor, Windsurf, VS Code and project-level `.mcp.json` / `.cursor/mcp.json` /
-  `.vscode/mcp.json`, imports the servers into `~/.hubris/config.json` and rewrites the client config so that it
-  points at Hubris only. A snapshot goes to `~/.hubris/backups/` and Restore puts things back exactly as they were.
+  `.vscode/mcp.json`, imports the servers (commands and `url` entries, with their headers) into
+  `~/.hubris/config.json` and rewrites the client config so that it points at Hubris only. A snapshot goes to `~/.hubris/backups/` and Restore puts things back exactly as they were.
 
 ## Install
 
@@ -81,19 +89,25 @@ Bridges live in `~/.hubris/config.json` (mode 0600):
   "bridges": [
     { "name": "fs", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/me/dev"] },
     { "name": "gh", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"],
-      "env": { "GITHUB_TOKEN": "…" } }
+      "env": { "GITHUB_TOKEN": "${GITHUB_TOKEN}" } },
+    { "name": "linear", "url": "https://mcp.linear.app/mcp",
+      "headers": { "Authorization": "Bearer ${LINEAR_TOKEN}" } },
+    { "name": "legacy", "url": "https://old.example.com/sse", "transport": "sse" }
   ]
 }
 ```
 
-They can also be given on the command line with `--bridge=name:command arg…`. Bridged tools show up as
-`fs__read_file`, `gh__create_issue` and so on.
+`${NAME}` in env and header values is read from the hub's environment at start; the file keeps the
+placeholder. They can also be given on the command line with `--bridge=name:command arg…` or
+`--bridge=name:https://host/mcp "Authorization: Bearer …"` (`sse:https://…` for the older transport).
+Bridged tools show up as `fs__read_file`, `gh__create_issue`, `linear__create_issue` and so on.
 
 ## Usage
 
 ```
 Hubris --stdio [--compact] [--mode=safe|bypass] [--approval-timeout=120] [--cache-ttl=24h]
-       [--no-cache] [--no-control] [--verbose] [--bridge=<name>:<command> [args…]]…
+       [--no-cache] [--no-control] [--verbose]
+       [--bridge=<name>:<command> [args…]]… [--bridge=<name>:<url> ["Header: value"…]]…
 ```
 
 Built-in tools: `hub_status`, `git_smart_status`, `fs_read_head`, `mcp_search_tools`, `mcp_execute_tool`.
@@ -127,8 +141,8 @@ tests/run.sh                        # unit tests, warning-free AOT publish, e2e 
 dotnet test tests/Hubris.Tests      # unit tests only
 ```
 
-73 xUnit tests and 58 end-to-end checks (`tests/e2e/control_test.py` drives a published binary with a
-Python echo server as bridge). Both projects publish with `TreatWarningsAsErrors` and zero IL/AOT warnings.
+80 xUnit tests and 68 end-to-end checks (`tests/e2e/control_test.py` drives a published binary with a Python
+stdio echo server as bridge, `tests/e2e/http_test.py` with a Python Streamable HTTP server). Both projects publish with `TreatWarningsAsErrors` and zero IL/AOT warnings.
 
 ## Layout
 
@@ -145,4 +159,4 @@ brand/               icon, mark, wordmark
 ## Status
 
 Works on macOS. Paths for the client configs on Windows and Linux are in the code but not tested there.
-Version 1.1.0. MIT license.
+Version 1.2.0. MIT license.

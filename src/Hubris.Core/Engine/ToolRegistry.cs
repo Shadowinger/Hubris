@@ -23,10 +23,10 @@ public sealed class HubRuntime
     public ToolRegistry Registry { get; set; } = null!;
     public ToolCacheStore? ToolCache { get; init; }
     /// <summary>Appended by reload_config on a socket thread while the status loop enumerates: a queue snapshots on enumerate.</summary>
-    public ConcurrentQueue<ExternalMcpBridge> Bridges { get; } = new();
+    public ConcurrentQueue<McpBridge> Bridges { get; } = new();
     public int BridgeCount => Bridges.Count;
     public int BridgesRunning { get { int n = 0; foreach (var b in Bridges) if (b.IsAlive) n++; return n; } }
-    public const string Version = "1.1.0";
+    public const string Version = "1.2.0";
 }
 
 public sealed class ToolRegistry

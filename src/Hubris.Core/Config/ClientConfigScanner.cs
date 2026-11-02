@@ -15,9 +15,15 @@ public sealed record ClientKind(string Id, string Name, string RootKey, string? 
 public sealed class DetectedServer
 {
     public required string Name { get; init; }
+    /// <summary>Empty for a remote server.</summary>
     public required string Command { get; init; }
     public List<string> Args { get; init; } = new();
     public Dictionary<string, string> Env { get; init; } = new();
+    public string? Url { get; init; }
+    public Dictionary<string, string> Headers { get; init; } = new();
+    /// <summary>"http" or "sse" for a remote server, null for a command.</summary>
+    public string? Transport { get; init; }
+    public bool IsRemote => !string.IsNullOrEmpty(Url);
     /// <summary>Project path for a per-project entry in ~/.claude.json; empty for the global block.</summary>
     public string Scope { get; init; } = "";
 }
@@ -165,18 +171,31 @@ public static class ClientConfigScanner
                 list.AddRange(BridgesFromHubrisArgs(entry, scope));
                 continue;
             }
-            string? command = entry["command"]?.GetValue<string>();
-            if (string.IsNullOrWhiteSpace(command)) continue; // remote (url/type sse) servers cannot be bridged over stdio
-            var server = new DetectedServer { Name = kv.Key, Command = command, Scope = scope };
+            string? command = Str(entry["command"]);
+            string? url = Str(entry["url"]) ?? Str(entry["serverUrl"]); // Claude Code / Cursor / VS Code use url, Windsurf serverUrl
+            if (string.IsNullOrWhiteSpace(command) && string.IsNullOrWhiteSpace(url)) continue;
+            string? transport = null;
+            if (!string.IsNullOrWhiteSpace(url))
+            {
+                string type = Str(entry["type"]) ?? Str(entry["transport"]) ?? "";
+                transport = type.Contains("sse", StringComparison.OrdinalIgnoreCase) ? "sse" : "http";
+                command = string.Empty;
+            }
+            var server = new DetectedServer { Name = kv.Key, Command = command!, Scope = scope, Url = url, Transport = transport };
             if (entry["args"] is JsonArray args)
                 foreach (var a in args)
                     if (a is JsonValue v && v.TryGetValue<string>(out var s)) server.Args.Add(s);
             if (entry["env"] is JsonObject env)
                 foreach (var e in env)
                     if (e.Value is JsonValue ev && ev.TryGetValue<string>(out var es)) server.Env[e.Key] = es;
+            if (entry["headers"] is JsonObject headers)
+                foreach (var h in headers)
+                    if (h.Value is JsonValue hv && hv.TryGetValue<string>(out var hs)) server.Headers[h.Key] = hs;
             list.Add(server);
         }
     }
+
+    private static string? Str(JsonNode? node) => node is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
 
     private static IEnumerable<DetectedServer> BridgesFromHubrisArgs(JsonObject entry, string scope)
     {
@@ -186,14 +205,19 @@ public static class ClientConfigScanner
             if (a is JsonValue v && v.TryGetValue<string>(out var s)) argv.Add(s);
         if (!CliOptions.TryParse(argv.ToArray(), out var opts, out _)) yield break;
         foreach (var b in opts.Bridges)
-            yield return new DetectedServer { Name = b.Name, Command = b.Command, Args = new List<string>(b.Args), Scope = scope };
+            yield return new DetectedServer
+            {
+                Name = b.Name, Command = b.Command, Args = new List<string>(b.Args), Scope = scope,
+                Url = b.Url, Transport = b.IsRemote ? b.TransportName : null,
+                Headers = b.Headers is null ? new() : new Dictionary<string, string>(b.Headers),
+            };
     }
 
     /// <summary>Loop guard: never import an entry that would make Hubris spawn itself.</summary>
     public static bool IsHubrisEntry(string key, JsonObject entry)
     {
         if (key.Contains("hubris", StringComparison.OrdinalIgnoreCase)) return true;
-        string? command = entry["command"]?.GetValue<string>();
+        string? command = Str(entry["command"]);
         if (command is not null)
         {
             string file = Path.GetFileNameWithoutExtension(command);

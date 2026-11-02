@@ -53,6 +53,9 @@ public static class ClientConfigHijacker
                 Command = s.Command,
                 Args = new List<string>(s.Args),
                 Env = s.Env.Count == 0 ? null : new Dictionary<string, string>(s.Env),
+                Url = s.Url,
+                Headers = s.Headers.Count == 0 ? null : new Dictionary<string, string>(s.Headers),
+                Transport = s.Transport,
                 Source = s.Scope.Length > 0 ? $"{client.Kind.Id}:{s.Scope}" : client.Kind.Id,
             });
             added.Add(name);
@@ -237,7 +240,8 @@ public static class ClientConfigHijacker
     }
 
     private static bool SameLaunch(BridgeConfig b, DetectedServer s)
-        => b.Command == s.Command && b.Args.SequenceEqual(s.Args) && SameEnv(b.Env, s.Env);
+        => b.Command == s.Command && b.Args.SequenceEqual(s.Args) && SameEnv(b.Env, s.Env)
+           && string.Equals(b.Url ?? "", s.Url ?? "", StringComparison.Ordinal) && SameEnv(b.Headers, s.Headers);
 
     private static bool SameEnv(Dictionary<string, string>? a, Dictionary<string, string> b)
     {

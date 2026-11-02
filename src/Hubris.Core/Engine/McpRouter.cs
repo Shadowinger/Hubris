@@ -16,14 +16,14 @@ public sealed class McpRouter
     private readonly ToolRegistry _registry;
     private readonly SecurityInterceptor _security;
     private readonly HubRuntime _runtime;
-    private readonly IEnumerable<ExternalMcpBridge> _bridges;
+    private readonly IEnumerable<McpBridge> _bridges;
     private readonly ControlHub? _control;
     private readonly ConcurrentDictionary<RpcId, CancellationTokenSource> _inflight = new();
     private readonly CancellationTokenSource _shutdown = new();
     private volatile bool _initialized;
     private long _callSeq;
 
-    public McpRouter(StdioTransport transport, ToolRegistry registry, SecurityInterceptor security, HubRuntime runtime, IEnumerable<ExternalMcpBridge> bridges, ControlHub? control = null)
+    public McpRouter(StdioTransport transport, ToolRegistry registry, SecurityInterceptor security, HubRuntime runtime, IEnumerable<McpBridge> bridges, ControlHub? control = null)
     {
         _transport = transport;
         _registry = registry;
@@ -317,7 +317,7 @@ public sealed class McpRouter
 
     // ------------------------------------------------------------------ bridge events
 
-    private void OnBridgeToolsChanged(ExternalMcpBridge bridge)
+    private void OnBridgeToolsChanged(McpBridge bridge)
     {
         _ = Task.Run(async () =>
         {
@@ -334,13 +334,13 @@ public sealed class McpRouter
     }
 
     /// <summary>A dead bridge must not keep advertising tools that can only fail.</summary>
-    private void OnBridgeExited(ExternalMcpBridge bridge)
+    private void OnBridgeExited(McpBridge bridge)
     {
         _ = Task.Run(() => ReplaceBridgeToolsAsync(bridge, []), CancellationToken.None);
     }
 
     /// <summary>Also used by the control hub after Clear cache re-lists a bridge.</summary>
-    private async Task ReplaceBridgeToolsAsync(ExternalMcpBridge bridge, List<ToolDefinition> tools)
+    private async Task ReplaceBridgeToolsAsync(McpBridge bridge, List<ToolDefinition> tools)
     {
         _registry.UnregisterWhere(t => t is BridgedTool bt && string.Equals(bt.BridgeName, bridge.Name, StringComparison.Ordinal));
         foreach (var def in tools) _registry.Register(new BridgedTool(bridge, def));

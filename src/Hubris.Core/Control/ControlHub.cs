@@ -58,9 +58,9 @@ public sealed class ControlHub : IAsyncDisposable
     /// <summary>Set by Program: initiates graceful shutdown.</summary>
     public Action? RequestShutdown { get; set; }
     /// <summary>Set by the router: swaps a bridge's registered tools and notifies the client.</summary>
-    public Func<ExternalMcpBridge, List<ToolDefinition>, Task>? ReplaceBridgeTools { get; set; }
+    public Func<McpBridge, List<ToolDefinition>, Task>? ReplaceBridgeTools { get; set; }
     /// <summary>Set by the router: a newly added bridge needs its events hooked up.</summary>
-    public Action<ExternalMcpBridge>? BridgeAdded { get; set; }
+    public Action<McpBridge>? BridgeAdded { get; set; }
 
     // ------------------------------------------------------------------ lifecycle
 
@@ -369,7 +369,7 @@ public sealed class ControlHub : IAsyncDisposable
         foreach (var bridge in _rt.Bridges)
         {
             _rt.ToolCache?.Invalidate(bridge.Name);
-            if (bridge.IsStarted && !bridge.IsAlive)
+            if (bridge.IsStarted && !bridge.IsAlive && !bridge.CanRestart)
             {
                 Log.Warn($"bridge '{bridge.Name}' has exited; restart the hub to bring it back");
                 continue;

@@ -71,8 +71,18 @@ public sealed class ConfigViewModel : ObservableObject
             foreach (var b in HubrisConfigFile.Load().Bridges)
             {
                 var row = NewBridge();
-                row.Name = b.Name; row.Command = b.Command; row.Args = string.Join(' ', b.Args.Select(Quote)); row.Source = b.Source ?? "";
-                row.EnvCount = b.Env?.Count ?? 0;
+                row.Name = b.Name; row.Source = b.Source ?? "";
+                if (b.IsRemote)
+                {
+                    // Remote server: the command box carries the URL, the argument box the transport; headers stay in config.json.
+                    row.Command = b.Url!; row.Args = string.Equals(b.Transport, "sse", StringComparison.OrdinalIgnoreCase) ? "sse" : "http";
+                    row.EnvCount = b.Headers?.Count ?? 0;
+                }
+                else
+                {
+                    row.Command = b.Command; row.Args = string.Join(' ', b.Args.Select(Quote));
+                    row.EnvCount = b.Env?.Count ?? 0;
+                }
                 Bridges.Add(row);
             }
         }
@@ -87,10 +97,17 @@ public sealed class ConfigViewModel : ObservableObject
         {
             if (string.IsNullOrWhiteSpace(row.Name) || string.IsNullOrWhiteSpace(row.Command)) continue;
             var prev = existing.Bridges.Find(b => b.Name == row.Name.Trim());
+            string? source = prev?.Source ?? (string.IsNullOrEmpty(row.Source) ? null : row.Source);
+            if (row.IsRemote)
+            {
+                string transport = row.Args.Trim().Equals("sse", StringComparison.OrdinalIgnoreCase) ? "sse" : "http";
+                cfg.Bridges.Add(new BridgeConfig { Name = row.Name.Trim(), Url = row.Command.Trim(), Transport = transport, Headers = prev?.Headers, Source = source });
+                continue;
+            }
             cfg.Bridges.Add(new BridgeConfig
             {
                 Name = row.Name.Trim(), Command = row.Command.Trim(), Args = SplitArgs(row.Args),
-                Env = prev?.Env, Source = prev?.Source ?? (string.IsNullOrEmpty(row.Source) ? null : row.Source),
+                Env = prev?.Env, Source = source,
             });
         }
         HubrisConfigFile.Save(cfg);
@@ -366,13 +383,16 @@ public sealed class BridgeRow : ObservableObject
     private int _envCount;
 
     public string Name { get => _name; set => Set(ref _name, value); }
-    public string Command { get => _command; set => Set(ref _command, value); }
+    public string Command { get => _command; set { if (Set(ref _command, value)) { Raise(nameof(IsRemote)); Raise(nameof(EnvText)); Raise(nameof(ArgsPlaceholder)); } } }
     public string Args { get => _args; set => Set(ref _args, value); }
+    /// <summary>A URL in the command box makes this a remote (HTTP) bridge; the argument box then holds the transport.</summary>
+    public bool IsRemote => _command.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || _command.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+    public string ArgsPlaceholder => IsRemote ? "transport: http (default) or sse" : "arguments (-y @modelcontextprotocol/server-github)";
     public string Source { get => _source; set { if (Set(ref _source, value)) Raise(nameof(HasSource)); } }
     public bool HasSource => _source.Length > 0;
     public int EnvCount { get => _envCount; set { if (Set(ref _envCount, value)) { Raise(nameof(EnvText)); Raise(nameof(HasEnv)); } } }
     public bool HasEnv => _envCount > 0;
-    public string EnvText => $"{_envCount} env";
+    public string EnvText => IsRemote ? $"{_envCount} headers" : $"{_envCount} env";
     public RelayCommand? RemoveCommand { get; set; }
 }
 

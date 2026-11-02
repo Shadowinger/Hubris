@@ -50,20 +50,42 @@ public class ConfigTests : IDisposable
               }
             }
             """);
-        Write(".claude.json", """{ "mcpServers": { "gw": { "command": "/Applications/Hubris.app/Contents/MacOS/Hubris", "args": ["--stdio"] }, "fs": { "command": "uvx", "args": ["mcp-fs"] } }, "projects": { "/x": { "mcpServers": { "p": { "command": "a" } } } }, "other": 1 }""");
+        Write(".claude.json", """{ "mcpServers": { "gw": { "command": "/Applications/Hubris.app/Contents/MacOS/Hubris", "args": ["--stdio"] }, "fs": { "command": "uvx", "args": ["mcp-fs"] }, "api": { "type": "sse", "url": "https://api.test/sse", "headers": { "Authorization": "Bearer ${HUBRIS_TEST_TOKEN}" } } }, "projects": { "/x": { "mcpServers": { "p": { "command": "a" } } } }, "other": 1 }""");
         Write(Path.Combine(".cursor", "mcp.json"), """{ "mcpServers": { "only": { "command": "node", "args": ["srv.js", "--for-hubris"] } } }""");
 
         var clients = ClientConfigScanner.Scan(workspaceDir: null, home: _home, appData: _home);
         var desktop = Assert.Single(clients, c => c.Kind == ClientConfigScanner.ClaudeDesktop);
-        Assert.Equal(["github", "fs"], desktop.Servers.Select(s => s.Name)); // fs comes from hubris's own --bridge args
+        Assert.Equal(["github", "fs", "remote"], desktop.Servers.Select(s => s.Name)); // fs comes from hubris's own --bridge args
         Assert.Equal(["-y", "server-fs", "/x"], desktop.Servers[1].Args);
+        Assert.True(desktop.Servers[2].IsRemote);
+        Assert.Equal("https://example.com/mcp", desktop.Servers[2].Url);
+        Assert.Equal("http", desktop.Servers[2].Transport); // no type given: Streamable HTTP
         Assert.True(desktop.HubrisPresent);
         Assert.False(desktop.IsGateway);
         Assert.Equal("t", desktop.Servers[0].Env["GITHUB_TOKEN"]);
 
         var code = Assert.Single(clients, c => c.Kind == ClientConfigScanner.ClaudeCode);
-        Assert.Equal(["fs", "p"], code.Servers.Select(s => s.Name)); // "gw" launches Hubris -> loop guard; "p" comes from projects["/x"]
+        Assert.Equal(["fs", "api", "p"], code.Servers.Select(s => s.Name)); // "gw" launches Hubris -> loop guard; "p" comes from projects["/x"]
         Assert.True(code.HubrisPresent);
+        var api = code.Servers[1];
+        Assert.Equal("sse", api.Transport);
+        Assert.Equal("", api.Command);
+        Assert.Equal("Bearer ${HUBRIS_TEST_TOKEN}", api.Headers["Authorization"]); // kept verbatim; expanded when the hub starts
+
+        var cfg = new HubrisConfig();
+        var imported = ClientConfigHijacker.Import(code, cfg);
+        Assert.Equal(["fs", "api", "p"], imported.Added);
+        var b = cfg.Bridges[1];
+        Assert.Equal("https://api.test/sse", b.Url);
+        Assert.Equal("sse", b.Transport);
+        Assert.Equal("", b.Command);
+        Assert.Equal(["fs", "api", "p"], ClientConfigHijacker.Import(code, cfg).Skipped); // same launch twice: nothing added
+        Environment.SetEnvironmentVariable("HUBRIS_TEST_TOKEN", "sekret");
+        var spec = HubrisConfigFile.ToSpecs(cfg)[1];
+        Assert.True(spec.IsRemote);
+        Assert.Equal("Bearer sekret", spec.Headers!["Authorization"]);
+        Assert.Equal("Bearer ${HUBRIS_TEST_TOKEN}", cfg.Bridges[1].Headers!["Authorization"]); // the file keeps the placeholder
+        Assert.Equal("a ${NOPE_UNSET_VAR} b", EnvExpander.Expand("a ${NOPE_UNSET_VAR} b"));
 
         var cursor = Assert.Single(clients, c => c.Kind == ClientConfigScanner.Cursor);
         Assert.Equal(["only"], cursor.Servers.Select(s => s.Name)); // "hubris" inside an argument is not the gateway

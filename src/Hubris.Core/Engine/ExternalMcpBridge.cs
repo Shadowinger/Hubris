@@ -5,24 +5,17 @@ using System.IO.Pipelines;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Hubris.Cli;
 using Hubris.Protocol;
-using Hubris.Security;
-using Hubris.Tools;
 using Hubris.Transport;
 
 namespace Hubris.Engine;
-
-public sealed class McpBridgeException : Exception
-{
-    public McpBridgeException(int code, string message) : base(message) => Code = code;
-    public int Code { get; }
-}
 
 /// <summary>
 /// Hosts an external MCP server as a child process over stdio, correlates requests/responses by id,
 /// and guarantees the child is reaped on dispose.
 /// </summary>
-public sealed class ExternalMcpBridge : IAsyncDisposable
+public sealed class ExternalMcpBridge : McpBridge
 {
     private readonly string _command;
     private readonly IReadOnlyList<string> _args;
@@ -40,41 +33,30 @@ public sealed class ExternalMcpBridge : IAsyncDisposable
 
     private readonly SemaphoreSlim _startLock = new(1, 1);
 
-    public ExternalMcpBridge(string name, string command, IReadOnlyList<string> args, string? cwd = null, IReadOnlyDictionary<string, string>? env = null)
+    public ExternalMcpBridge(BridgeSpec spec, string? cwd = null) : base(spec)
     {
-        Name = name;
-        _command = command;
-        _args = args;
+        _command = spec.Command;
+        _args = spec.Args;
         _cwd = cwd;
-        Env = env ?? new Dictionary<string, string>();
+        Env = spec.Env ?? new Dictionary<string, string>();
     }
 
-    public string Name { get; }
+    public ExternalMcpBridge(string name, string command, IReadOnlyList<string> args, string? cwd = null, IReadOnlyDictionary<string, string>? env = null)
+        : this(new BridgeSpec(name, command, args, env), cwd)
+    {
+    }
+
     public string Command => _command;
     public IReadOnlyList<string> Args => _args;
     public IReadOnlyDictionary<string, string> Env { get; }
-    /// <summary>False for a bridge registered from the tool cache whose process has not been needed yet.</summary>
-    public bool IsStarted => _process is not null;
-    public bool IsAlive => _process is { HasExited: false };
+    public override string Launch => _command;
+    public override bool IsStarted => _process is not null;
+    public override bool IsAlive => _process is { HasExited: false };
     public int? ExitCode => _process is { HasExited: true } p ? p.ExitCode : null;
-    public Implementation? ServerInfo { get; private set; }
-
-    /// <summary>Raised when the child announces notifications/tools/list_changed.</summary>
-    public event Action<ExternalMcpBridge>? ToolsChanged;
-    /// <summary>Raised when the child process dies on its own (not on dispose).</summary>
-    public event Action<ExternalMcpBridge>? Exited;
 
     // ------------------------------------------------------------------ lifecycle
 
-    /// <summary>Spawns the child, completes the MCP handshake and lists its tools.</summary>
-    public async Task<List<ToolDefinition>> StartAsync(CancellationToken ct)
-    {
-        await EnsureStartedAsync(ct).ConfigureAwait(false);
-        return await ListToolsAsync(ct).ConfigureAwait(false);
-    }
-
-    /// <summary>Starts the child on first use; concurrent callers wait for the same start. No-op once started.</summary>
-    public async Task EnsureStartedAsync(CancellationToken ct)
+    public override async Task EnsureStartedAsync(CancellationToken ct)
     {
         if (_process is not null) return;
         await _startLock.WaitAsync(ct).ConfigureAwait(false);
@@ -125,73 +107,14 @@ public sealed class ExternalMcpBridge : IAsyncDisposable
 
         Log.Info($"bridge '{Name}' started pid={process.Id} ({_command})");
 
-        var initParams = new JsonObject
-        {
-            ["protocolVersion"] = McpProtocol.Latest,
-            ["capabilities"] = new JsonObject(),
-            ["clientInfo"] = new JsonObject { ["name"] = "Hubris", ["version"] = HubRuntime.Version },
-        };
-
-        JsonNode? initResult = await SendRequestAsync("initialize", initParams, ct, TimeSpan.FromSeconds(30)).ConfigureAwait(false);
-        if (initResult is JsonObject io)
-        {
-            if (io["serverInfo"] is JsonObject si)
-                ServerInfo = new Implementation
-                {
-                    Name = si["name"]?.GetValue<string>() ?? Name,
-                    Version = si["version"]?.GetValue<string>() ?? "?",
-                };
-        }
-
+        JsonNode? initResult = await SendRequestAsync("initialize", InitializeParams(), ct, TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+        ReadInitializeResult(initResult);
         await SendNotificationAsync("notifications/initialized", null, ct).ConfigureAwait(false);
-    }
-
-    public async Task<List<ToolDefinition>> ListToolsAsync(CancellationToken ct)
-    {
-        var all = new List<ToolDefinition>();
-        string? cursor = null;
-        int pages = 0;
-        do
-        {
-            JsonObject? p = cursor is null ? null : new JsonObject { ["cursor"] = cursor };
-            JsonNode? node = await SendRequestAsync("tools/list", p, ct, TimeSpan.FromSeconds(30)).ConfigureAwait(false);
-            if (node is null) break;
-            var page = JsonSerializer.Deserialize(node, McpJsonContext.Default.ListToolsResult);
-            if (page is null) break;
-            all.AddRange(page.Tools);
-            cursor = page.NextCursor;
-        } while (cursor is not null && ++pages < 64);
-        return all;
-    }
-
-    public async Task<CallToolResult> CallToolAsync(string remoteName, JsonObject? arguments, CancellationToken ct)
-    {
-        try { await EnsureStartedAsync(ct).ConfigureAwait(false); }
-        catch (McpBridgeException ex) { return CallToolResult.Error($"Bridge '{Name}' could not start: {ex.Message}"); }
-        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or TimeoutException or InvalidOperationException)
-        { return CallToolResult.Error($"Bridge '{Name}' could not start: {ex.Message}"); }
-        var p = new JsonObject { ["name"] = remoteName };
-        if (arguments is not null) p["arguments"] = arguments.DeepClone();
-        try
-        {
-            JsonNode? node = await SendRequestAsync("tools/call", p, ct, TimeSpan.FromMinutes(5)).ConfigureAwait(false);
-            if (node is null) return CallToolResult.Error($"Bridge '{Name}' returned an empty result for '{remoteName}'.");
-            var result = JsonSerializer.Deserialize(node, McpJsonContext.Default.CallToolResult);
-            return result ?? CallToolResult.Error($"Bridge '{Name}' returned an unparseable result for '{remoteName}'.");
-        }
-        catch (McpBridgeException ex)
-        {
-            return CallToolResult.Error($"Bridge '{Name}' error {ex.Code}: {ex.Message}");
-        }
-        catch (TimeoutException)
-        {
-            return CallToolResult.Error($"Bridge '{Name}' timed out executing '{remoteName}'.");
-        }
     }
 
     // ------------------------------------------------------------------ outbound
 
-    private async Task<JsonNode?> SendRequestAsync(string method, JsonNode? parameters, CancellationToken ct, TimeSpan timeout)
+    protected override async Task<JsonNode?> SendRequestAsync(string method, JsonNode? parameters, CancellationToken ct, TimeSpan timeout)
     {
         if (!IsAlive) throw new McpBridgeException(JsonRpcErrorCodes.InternalError, $"bridge '{Name}' is not running");
 
@@ -252,13 +175,6 @@ public sealed class ExternalMcpBridge : IAsyncDisposable
             Log.Debug($"bridge '{Name}' cancel forward failed: {ex.Message}");
         }
     }
-
-    private static JsonNode? IdToNode(RpcId id) => id.Kind switch
-    {
-        RpcIdKind.Number => JsonValue.Create(id.Number),
-        RpcIdKind.String => JsonValue.Create(id.Text),
-        _ => null,
-    };
 
     private ValueTask SendNotificationAsync(string method, JsonNode? parameters, CancellationToken ct)
         => WriteFrameAsync(w =>
@@ -348,7 +264,7 @@ public sealed class ExternalMcpBridge : IAsyncDisposable
         {
             // Notification from child.
             if (string.Equals(msg.Method, "notifications/tools/list_changed", StringComparison.Ordinal))
-                ToolsChanged?.Invoke(this);
+                RaiseToolsChanged();
             else
                 Log.Debug($"bridge '{Name}' notification {msg.Method}");
             return;
@@ -393,7 +309,7 @@ public sealed class ExternalMcpBridge : IAsyncDisposable
         if (Volatile.Read(ref _disposed) == 0)
         {
             Log.Warn($"bridge '{Name}' exited with code {code}");
-            Exited?.Invoke(this);
+            RaiseExited();
         }
     }
 
@@ -406,7 +322,7 @@ public sealed class ExternalMcpBridge : IAsyncDisposable
         }
     }
 
-    public async ValueTask DisposeAsync()
+    public override async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
         _lifetime.Cancel();
@@ -449,36 +365,4 @@ public sealed class ExternalMcpBridge : IAsyncDisposable
         _lifetime.Dispose();
         Log.Info($"bridge '{Name}' stopped");
     }
-}
-
-/// <summary>Registry-facing adapter for one remote tool.</summary>
-public sealed class BridgedTool : IMcpTool
-{
-    private readonly ExternalMcpBridge _bridge;
-    private readonly string _remoteName;
-
-    public BridgedTool(ExternalMcpBridge bridge, ToolDefinition remote)
-    {
-        _bridge = bridge;
-        _remoteName = remote.Name;
-        Name = string.Concat(bridge.Name, "__", remote.Name);
-        Description = string.IsNullOrWhiteSpace(remote.Description) ? $"Tool '{remote.Name}' from bridge '{bridge.Name}'." : remote.Description!;
-        InputSchema = remote.InputSchema ?? new JsonObject { ["type"] = "object" };
-        RiskLevel = remote.Annotations switch
-        {
-            { ReadOnlyHint: true } => ToolRiskLevel.ReadOnly,
-            { DestructiveHint: true } => ToolRiskLevel.Destructive,
-            _ => ToolRiskLevel.Mutating,
-        };
-    }
-
-    public string BridgeName => _bridge.Name;
-    public string Name { get; }
-    public string Description { get; }
-    public ToolRiskLevel RiskLevel { get; }
-    public bool Pinned => false;
-    public JsonObject InputSchema { get; }
-
-    public async ValueTask<CallToolResult> ExecuteAsync(JsonObject? arguments, CancellationToken ct)
-        => await _bridge.CallToolAsync(_remoteName, arguments, ct).ConfigureAwait(false);
 }
