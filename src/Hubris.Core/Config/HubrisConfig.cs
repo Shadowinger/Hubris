@@ -18,12 +18,33 @@ public sealed class BridgeConfig
     [JsonPropertyName("headers")] public Dictionary<string, string>? Headers { get; set; }
     /// <summary>"http" (Streamable HTTP, default for a url) or "sse".</summary>
     [JsonPropertyName("transport")] public string? Transport { get; set; }
+    /// <summary>{ "type": "oauth", … }: the hub signs in through the browser and keeps the token in the OS secret store.</summary>
+    [JsonPropertyName("auth")] public BridgeAuthConfig? Auth { get; set; }
     [JsonPropertyName("source")] public string? Source { get; set; }
 
     public bool IsRemote => !string.IsNullOrWhiteSpace(Url);
 
     /// <summary>Env and header values may say <c>${NAME}</c>; those are read from the hub's environment at start.</summary>
-    public BridgeSpec ToSpec() => new(Name, Command ?? string.Empty, Args, EnvExpander.Expand(Env), Url, EnvExpander.Expand(Headers), Transport);
+    public BridgeSpec ToSpec() => new(Name, Command ?? string.Empty, Args, EnvExpander.Expand(Env), Url, EnvExpander.Expand(Headers), Transport, Auth?.ToSpec());
+}
+
+public sealed class BridgeAuthConfig
+{
+    /// <summary>Only "oauth" is known.</summary>
+    [JsonPropertyName("type")] public string Type { get; set; } = "oauth";
+    /// <summary>Secret-store account; bridges naming the same provider share one login. Default: the bridge name.</summary>
+    [JsonPropertyName("provider")] public string? Provider { get; set; }
+    /// <summary>The MCP server URL to discover the authorization server from; required for a stdio bridge, optional override for a url bridge.</summary>
+    [JsonPropertyName("issuer")] public string? Issuer { get; set; }
+    [JsonPropertyName("clientId")] public string? ClientId { get; set; }
+    [JsonPropertyName("clientSecret")] public string? ClientSecret { get; set; }
+    [JsonPropertyName("scope")] public string? Scope { get; set; }
+    /// <summary>stdio bridge: environment variable that receives the access token (e.g. NOTION_TOKEN).</summary>
+    [JsonPropertyName("env")] public string? Env { get; set; }
+
+    public OAuthSpec? ToSpec() => string.Equals(Type, "oauth", StringComparison.OrdinalIgnoreCase)
+        ? new OAuthSpec(Provider, Issuer, ClientId, EnvExpander.Expand(ClientSecret ?? string.Empty) is { Length: > 0 } s ? s : null, Scope, Env)
+        : null;
 }
 
 public static class EnvExpander
@@ -66,6 +87,7 @@ public sealed class HubrisConfig
 [JsonSourceGenerationOptions(WriteIndented = true, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(HubrisConfig))]
 [JsonSerializable(typeof(BridgeConfig))]
+[JsonSerializable(typeof(BridgeAuthConfig))]
 [JsonSerializable(typeof(McpSnapshot))]
 [JsonSerializable(typeof(JsonObject))]
 [JsonSerializable(typeof(Dictionary<string, JsonObject>))]

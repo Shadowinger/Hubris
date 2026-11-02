@@ -117,7 +117,7 @@
             <TabControl Grid.Row="2">
                 <!-- dashboard -->
                 <TabItem Header="Dashboard">
-                    <Grid RowDefinitions="Auto,Auto,*" Margin="0,10,0,0">
+                    <Grid RowDefinitions="Auto,Auto,Auto,*" Margin="0,10,0,0">
 
                         <!-- telemetry strip: 2 x 5 property grid, hairlines between cells -->
                         <Border Grid.Row="0" Classes="card" Padding="0">
@@ -144,12 +144,32 @@
                             </Grid>
                         </Border>
 
-                        <DockPanel Grid.Row="1" Margin="0,16,0,6">
+                        <!-- connections: bridges with an OAuth block, one row each -->
+                        <Border Grid.Row="1" Classes="card" Margin="0,10,0,0" IsVisible="{Binding HasAuth}">
+                            <StackPanel Spacing="4">
+                                <TextBlock Classes="title" Text="Connections" />
+                                <ItemsControl ItemsSource="{Binding Auth}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:AuthRow">
+                                            <Grid ColumnDefinitions="160,Auto,*,Auto,Auto" ColumnSpacing="10" Margin="0,6,0,0">
+                                                <TextBlock Grid.Column="0" Classes="mono" VerticalAlignment="Center" Text="{Binding Bridge}" />
+                                                <Border Grid.Column="1" Classes="pill" Classes.ok="{Binding IsConnected}" Classes.warn="{Binding IsPending}" Classes.danger="{Binding IsBroken}" VerticalAlignment="Center"><TextBlock Text="{Binding State}" /></Border>
+                                                <TextBlock Grid.Column="2" Classes="muted" FontSize="11" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="{Binding Detail}" />
+                                                <Button Grid.Column="3" Classes="approve" Command="{Binding ConnectCommand}" Content="{Binding ConnectLabel}" IsEnabled="{Binding CanConnect}" ToolTip.Tip="Opens the browser to sign in; the token is kept in the OS secret store" />
+                                                <Button Grid.Column="4" Classes="ghost" Command="{Binding RevokeCommand}" Content="Disconnect" IsVisible="{Binding HasToken}" ToolTip.Tip="Forget the stored token" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Border>
+
+                        <DockPanel Grid.Row="2" Margin="0,16,0,6">
                             <Button DockPanel.Dock="Right" Classes="ghost" Command="{Binding ClearEventsCommand}" Padding="6,1" MinHeight="20" FontSize="11" Content="Clear" />
                             <TextBlock Classes="title" VerticalAlignment="Center" Text="Live calls" />
                         </DockPanel>
 
-                        <Grid Grid.Row="2" ColumnDefinitions="*,10,320">
+                        <Grid Grid.Row="3" ColumnDefinitions="*,10,320">
                             <Border Grid.Column="0" Classes="card" Padding="0" ClipToBounds="True">
                                 <Panel>
                                     <TextBlock IsVisible="{Binding !Events.Count}" Classes="muted" FontSize="12" Margin="12,10"

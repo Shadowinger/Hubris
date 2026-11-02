@@ -5,6 +5,7 @@
     <AssemblyName>Hubris.Core</AssemblyName>
     <RootNamespace>Hubris</RootNamespace>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>

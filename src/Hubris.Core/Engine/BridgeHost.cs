@@ -21,7 +21,7 @@ public sealed class BridgeHost
     public async Task<McpBridge?> AddAsync(BridgeSpec spec, CancellationToken ct)
     {
         McpBridge bridge;
-        try { bridge = McpBridge.Create(spec); }
+        try { bridge = McpBridge.Create(spec, _rt.Auth); }
         catch (Exception ex) when (ex is UriFormatException or ArgumentException)
         {
             Log.Warn($"bridge '{spec.Name}' skipped: {ex.Message}");

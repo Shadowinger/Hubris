@@ -48,8 +48,17 @@ client ──stdio──▶ Hubris ──stdio──▶ bridge 1 (npx …)
   (POST per message, JSON or event-stream answers, `Mcp-Session-Id`) by default, the older HTTP+SSE pair with
   `"transport": "sse"`. Headers from the config go on every request, so a bearer token or API key works;
   an expired session is reopened on the next call, and the server's tools stay listed in between.
-  Interactive OAuth login is not implemented: a server that answers 401 fails the call with a hint to add
-  a header.
+  A server that answers 401 without an auth block fails the call with a hint to add a header or an auth block.
+- **OAuth.** A bridge with `"auth": { "type": "oauth" }` signs in through the browser: Hubris discovers the
+  authorization server (RFC 9728 → RFC 8414), registers itself dynamically when the server allows it (or uses
+  `clientId`/`clientSecret` from the block), runs the authorization-code flow with PKCE against a loopback
+  listener on 127.0.0.1, and keeps the token in the OS secret store: the login keychain on macOS (service
+  `com.hubris.mcp.oauth`), the Credential Manager on Windows, a 0600 file under `~/.hubris/tokens` elsewhere.
+  Tokens are never written to `config.json` or the cache database. A token inside 60 s of expiry is refreshed
+  before use, a 401 triggers one refresh and retry, and concurrent calls share one refresh. For a stdio bridge
+  the token goes into the child's environment under `auth.env` right before the lazy spawn. The desktop app's
+  Connections card shows the state per bridge with Connect / Disconnect; the same goes over the control socket
+  as `oauth_start`, `oauth_status`, `oauth_revoke` and the `oauth_changed` event.
 - **Safe mode.** Tools are classified read-only / mutating / destructive from their annotations and names.
   Read-only calls pass, mutating calls have their arguments scanned for things like `rm -rf`, `DROP TABLE`,
   `git push --force`, destructive calls are blocked. A blocked call waits for Approve / Deny in the desktop app
@@ -92,10 +101,18 @@ Bridges live in `~/.hubris/config.json` (mode 0600):
       "env": { "GITHUB_TOKEN": "${GITHUB_TOKEN}" } },
     { "name": "linear", "url": "https://mcp.linear.app/mcp",
       "headers": { "Authorization": "Bearer ${LINEAR_TOKEN}" } },
-    { "name": "legacy", "url": "https://old.example.com/sse", "transport": "sse" }
+    { "name": "legacy", "url": "https://old.example.com/sse", "transport": "sse" },
+    { "name": "notion", "url": "https://mcp.notion.com/mcp", "auth": { "type": "oauth" } },
+    { "name": "supabase", "command": "npx", "args": ["-y", "@supabase/mcp-server-supabase"],
+      "auth": { "type": "oauth", "issuer": "https://mcp.supabase.com/mcp", "env": "SUPABASE_ACCESS_TOKEN" } }
   ]
 }
 ```
+
+An `auth` block takes `provider` (secret-store account, default the bridge name; two bridges naming the same
+provider share one login), `issuer` (the MCP server URL to discover from; required for a stdio bridge),
+`clientId` / `clientSecret` (otherwise dynamic registration), `scope`, and `env` (stdio only: the variable the
+child reads the token from). Press Connect in the desktop app once; refreshes happen on their own.
 
 `${NAME}` in env and header values is read from the hub's environment at start; the file keeps the
 placeholder. They can also be given on the command line with `--bridge=name:command arg…` or
@@ -141,7 +158,7 @@ tests/run.sh                        # unit tests, warning-free AOT publish, e2e 
 dotnet test tests/Hubris.Tests      # unit tests only
 ```
 
-80 xUnit tests and 68 end-to-end checks (`tests/e2e/control_test.py` drives a published binary with a Python
+91 xUnit tests and 68 end-to-end checks (`tests/e2e/control_test.py` drives a published binary with a Python
 stdio echo server as bridge, `tests/e2e/http_test.py` with a Python Streamable HTTP server). Both projects publish with `TreatWarningsAsErrors` and zero IL/AOT warnings.
 
 ## Layout
@@ -159,4 +176,4 @@ brand/               icon, mark, wordmark
 ## Status
 
 Works on macOS. Paths for the client configs on Windows and Linux are in the code but not tested there.
-Version 1.2.0. MIT license.
+Version 1.3.0. MIT license.

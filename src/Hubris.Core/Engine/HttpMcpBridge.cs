@@ -54,13 +54,14 @@ public sealed class HttpMcpBridge : McpBridge
         _url = new Uri(spec.Url ?? throw new ArgumentException("a remote bridge needs a url", nameof(spec)), UriKind.Absolute);
         _headers = spec.Headers ?? new Dictionary<string, string>();
         _legacySse = string.Equals(spec.Transport, TransportSse, StringComparison.OrdinalIgnoreCase);
-        _http = new HttpClient(handler ?? new SocketsHttpHandler
-        {
-            PooledConnectionLifetime = TimeSpan.FromMinutes(10),
-            AutomaticDecompression = DecompressionMethods.All,
-        })
-        { Timeout = Timeout.InfiniteTimeSpan }; // per-request timeouts are the bridge's own
+        _http = new HttpClient(handler ?? DefaultHandler()) { Timeout = Timeout.InfiniteTimeSpan }; // per-request timeouts are the bridge's own
     }
+
+    public static SocketsHttpHandler DefaultHandler() => new()
+    {
+        PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+        AutomaticDecompression = DecompressionMethods.All,
+    };
 
     public Uri Url => _url;
     public string Transport => _legacySse ? TransportSse : TransportHttp;
@@ -286,8 +287,9 @@ public sealed class HttpMcpBridge : McpBridge
         catch (Exception ex) when (ex is HttpRequestException or IOException) { }
 
         if (resp.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
-            throw new McpBridgeException(JsonRpcErrorCodes.InternalError,
-                $"HTTP {(int)resp.StatusCode} from {_url.Host}: the server wants credentials; put them in the bridge's headers (Authorization: Bearer …){detail}");
+            throw new McpBridgeException(JsonRpcErrorCodes.InternalError, Spec.Auth is null
+                ? $"HTTP {(int)resp.StatusCode} from {_url.Host}: the server wants credentials; put them in the bridge's headers (Authorization: Bearer …) or add an auth block{detail}"
+                : $"HTTP {(int)resp.StatusCode} from {_url.Host}: the sign-in is no longer accepted; press Connect in the Hubris desktop app{detail}");
         throw new McpBridgeException(JsonRpcErrorCodes.InternalError, $"HTTP {(int)resp.StatusCode} {resp.ReasonPhrase} from {_url.Host}{detail}");
     }
 

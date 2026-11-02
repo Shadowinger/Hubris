@@ -80,6 +80,7 @@ var runtime = new HubRuntime
     ToolCache = toolCache,
     Security = security,
     Registry = registry,
+    Auth = new Hubris.Auth.OAuthManager(Hubris.Auth.SecureTokenStores.ForThisOs()),
 };
 
 registry.Register(new HubStatusTool(runtime));

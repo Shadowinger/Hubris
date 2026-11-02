@@ -43,6 +43,10 @@ public sealed class ControlMessage
     [JsonPropertyName("bridges")] public List<string>? Bridges { get; set; }
     [JsonPropertyName("bridgesStale")] public List<string>? BridgesStale { get; set; }
     [JsonPropertyName("decisions")] public List<ToolDecision>? Decisions { get; set; }
+    /// <summary>OAuth state per bridge that has an auth block.</summary>
+    [JsonPropertyName("auth")] public List<AuthInfo>? Auth { get; set; }
+    /// <summary>oauth_start / oauth_revoke target.</summary>
+    [JsonPropertyName("bridge")] public string? Bridge { get; set; }
 
     // ---- tool_call
     [JsonPropertyName("id")] public string? Id { get; set; }
@@ -85,6 +89,18 @@ public sealed class ToolInfo
     [JsonPropertyName("decision")] public string? Decision { get; set; }
 }
 
+/// <summary>Sign-in state of one bridge's OAuth provider.</summary>
+public sealed class AuthInfo
+{
+    [JsonPropertyName("bridge")] public string Bridge { get; set; } = string.Empty;
+    [JsonPropertyName("provider")] public string Provider { get; set; } = string.Empty;
+    /// <summary>connected, expired, none, pending, error.</summary>
+    [JsonPropertyName("state")] public string State { get; set; } = string.Empty;
+    [JsonPropertyName("expiresAt")] public string? ExpiresAt { get; set; }
+    [JsonPropertyName("error")] public string? Error { get; set; }
+    [JsonPropertyName("env")] public string? Env { get; set; }
+}
+
 /// <summary>A remembered per-tool Safe-mode decision carried in status/hello.</summary>
 public sealed class ToolDecision
 {
@@ -117,6 +133,7 @@ public static class ControlTypes
     public const string ModeChanged = "mode_changed";
     public const string Log = "log";
     public const string Ack = "ack";
+    public const string OAuthChanged = "oauth_changed";
 
     // commands (ui → hub)
     public const string GetStatus = "get_status";
@@ -132,6 +149,9 @@ public static class ControlTypes
     public const string ReloadConfig = "reload_config";
     public const string CacheMaintain = "cache_maintain";
     public const string Shutdown = "shutdown";
+    public const string OAuthStart = "oauth_start";
+    public const string OAuthStatus = "oauth_status";
+    public const string OAuthRevoke = "oauth_revoke";
 }
 
 [JsonSourceGenerationOptions(DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull, WriteIndented = false)]
@@ -140,6 +160,8 @@ public static class ControlTypes
 [JsonSerializable(typeof(List<ToolInfo>))]
 [JsonSerializable(typeof(ToolDecision))]
 [JsonSerializable(typeof(List<ToolDecision>))]
+[JsonSerializable(typeof(AuthInfo))]
+[JsonSerializable(typeof(List<AuthInfo>))]
 [JsonSerializable(typeof(HubDescriptor))]
 public sealed partial class ControlJsonContext : JsonSerializerContext
 {

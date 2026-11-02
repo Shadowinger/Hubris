@@ -7,9 +7,12 @@ namespace Hubris.Cli;
 /// How to reach one external MCP server: a command to spawn (stdio), or a <paramref name="Url"/> to talk to over HTTP.
 /// <paramref name="Transport"/> is "http" (Streamable HTTP, default for a url) or "sse" (the older HTTP+SSE pair).
 /// </summary>
+/// <summary>OAuth login for a bridge. <paramref name="Env"/> names the variable a stdio child receives the token in.</summary>
+public sealed record OAuthSpec(string? Provider = null, string? Issuer = null, string? ClientId = null, string? ClientSecret = null, string? Scope = null, string? Env = null);
+
 public sealed record BridgeSpec(
     string Name, string Command, IReadOnlyList<string> Args, IReadOnlyDictionary<string, string>? Env = null,
-    string? Url = null, IReadOnlyDictionary<string, string>? Headers = null, string? Transport = null)
+    string? Url = null, IReadOnlyDictionary<string, string>? Headers = null, string? Transport = null, OAuthSpec? Auth = null)
 {
     public bool IsRemote => !string.IsNullOrEmpty(Url);
     public string TransportName => IsRemote ? (string.Equals(Transport, "sse", StringComparison.OrdinalIgnoreCase) ? "sse" : "http") : "stdio";

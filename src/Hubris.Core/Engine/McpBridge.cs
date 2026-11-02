@@ -133,9 +133,20 @@ public abstract class McpBridge : IAsyncDisposable
         _ => null,
     };
 
-    /// <summary>Builds the bridge a spec asks for; nothing is started here.</summary>
-    public static McpBridge Create(BridgeSpec spec)
-        => spec.IsRemote ? new HttpMcpBridge(spec) : new ExternalMcpBridge(spec);
+    /// <summary>Builds the bridge a spec asks for; nothing is started here. An auth block wires the OAuth token in.</summary>
+    public static McpBridge Create(BridgeSpec spec, Hubris.Auth.OAuthManager? auth = null)
+    {
+        var provider = spec.Auth is not null && auth is not null ? auth.GetOrCreate(spec) : null;
+        if (spec.IsRemote)
+            return new HttpMcpBridge(spec, provider is null ? null : new Hubris.Auth.OAuthDelegatingHandler(provider, HttpMcpBridge.DefaultHandler()));
+        var bridge = new ExternalMcpBridge(spec);
+        if (provider is not null)
+        {
+            if (provider.EnvName is null) Log.Warn($"bridge '{spec.Name}': auth.env (the variable that receives the token) is not set; the child gets no token");
+            else bridge.TokenSource = provider.GetAccessTokenAsync;
+        }
+        return bridge;
+    }
 }
 
 /// <summary>Registry-facing adapter for one remote tool.</summary>

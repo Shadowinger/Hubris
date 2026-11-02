@@ -68,7 +68,15 @@ public sealed class ControlHub : IAsyncDisposable
     {
         Server.Start();
         WriteDescriptor();
+        if (_rt.Auth is { } auth) auth.Changed += () => { if (Server.HasClients) Server.Broadcast(OAuthMessage(ControlTypes.OAuthChanged)); };
         _statusLoop = Task.Run(() => StatusLoopAsync(_lifetime.Token), CancellationToken.None);
+    }
+
+    private ControlMessage OAuthMessage(string type)
+    {
+        var m = ControlMessage.Of(type);
+        m.Auth = _rt.Auth?.Infos() ?? new List<AuthInfo>();
+        return m;
     }
 
     private async Task StatusLoopAsync(CancellationToken ct)
@@ -222,6 +230,7 @@ public sealed class ControlHub : IAsyncDisposable
         m.ActiveTokens = ctx.ActiveTokens;
         m.TotalTokens = ctx.TotalTokens;
         m.Decisions = DecisionList();
+        if (_rt.Auth is { Count: > 0 } auth) m.Auth = auth.Infos();
     }
 
     private ControlMessage BuildHello()
@@ -339,6 +348,29 @@ public sealed class ControlHub : IAsyncDisposable
                         if (NotifyToolsChanged is { } notifyReload) await notifyReload().ConfigureAwait(false);
                         await EmitToolsChangedAsync().ConfigureAwait(false);
                     }
+                    break;
+                }
+
+                case ControlTypes.OAuthStatus:
+                    var st = OAuthMessage(ControlTypes.Status);
+                    st.ReqId = cmd.ReqId;
+                    await client.SendAsync(st).ConfigureAwait(false);
+                    return;
+
+                case ControlTypes.OAuthStart:
+                case ControlTypes.OAuthRevoke:
+                {
+                    if (string.IsNullOrEmpty(cmd.Bridge)) { Fail(ack, "bridge required"); break; }
+                    if (_rt.Auth is null || !_rt.Auth.TryGet(cmd.Bridge, out var provider)) { Fail(ack, $"bridge '{cmd.Bridge}' has no auth block"); break; }
+                    if (cmd.Type == ControlTypes.OAuthRevoke) { provider.Revoke(); break; }
+                    if (provider.State == "pending") { Fail(ack, "login already in progress"); break; }
+                    // The browser round trip takes as long as the user does; the ack says it started, oauth_changed says how it ended.
+                    _ = Task.Run(async () =>
+                    {
+                        try { await provider.LoginAsync(_lifetime.Token).ConfigureAwait(false); }
+                        catch (Hubris.Auth.OAuthException) { /* logged and carried in the state */ }
+                    }, CancellationToken.None);
+                    ack.Text = "browser opened";
                     break;
                 }
 

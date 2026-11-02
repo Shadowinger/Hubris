@@ -77,6 +77,8 @@ public sealed class HubClient : IAsyncDisposable
     public Task RequestStatusAsync() => SendAsync(new ControlMessage { Type = ControlTypes.GetStatus });
     public Task RequestToolsAsync() => SendAsync(new ControlMessage { Type = ControlTypes.ListTools });
     public Task ShutdownHubAsync() => SendAsync(new ControlMessage { Type = ControlTypes.Shutdown });
+    public Task OAuthStartAsync(string bridge) => SendAsync(new ControlMessage { Type = ControlTypes.OAuthStart, Bridge = bridge });
+    public Task OAuthRevokeAsync(string bridge) => SendAsync(new ControlMessage { Type = ControlTypes.OAuthRevoke, Bridge = bridge });
 
     private async Task SendAsync(ControlMessage msg)
     {

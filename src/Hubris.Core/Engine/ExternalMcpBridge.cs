@@ -46,6 +46,9 @@ public sealed class ExternalMcpBridge : McpBridge
     {
     }
 
+    /// <summary>OAuth: fetched right before the spawn and handed to the child in the configured variable.</summary>
+    public Func<CancellationToken, bool, Task<string?>>? TokenSource { get; set; }
+
     public string Command => _command;
     public IReadOnlyList<string> Args => _args;
     public IReadOnlyDictionary<string, string> Env { get; }
@@ -87,6 +90,12 @@ public sealed class ExternalMcpBridge : McpBridge
         };
         foreach (var a in _args) psi.ArgumentList.Add(a);
         foreach (var kv in Env) psi.Environment[kv.Key] = kv.Value;
+        if (TokenSource is { } tokens && Spec.Auth?.Env is { } envName)
+        {
+            string token = await tokens(ct, false).ConfigureAwait(false)
+                           ?? throw new McpBridgeException(JsonRpcErrorCodes.InternalError, $"bridge '{Name}' is not signed in: press Connect in the Hubris desktop app");
+            psi.Environment[envName] = token; // shortcut: a token that expires while the child runs is not re-injected; restart the hub or Clear cache
+        }
         if (!string.IsNullOrEmpty(_cwd)) psi.WorkingDirectory = _cwd;
 
         var process = new Process { StartInfo = psi, EnableRaisingEvents = true };

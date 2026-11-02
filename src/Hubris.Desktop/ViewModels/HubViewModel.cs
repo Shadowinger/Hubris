@@ -144,6 +144,11 @@ public sealed class HubViewModel : ObservableObject
             case ControlTypes.Status:
                 ApplyStatus(m);
                 break;
+            case ControlTypes.OAuthChanged:
+                ApplyAuth(m.Auth);
+                foreach (var a in m.Auth ?? new())
+                    if (a.State is "connected" or "error") AddEvent(a.State == "connected" ? EventRow.Info($"oauth: {a.Bridge} signed in") : EventRow.Error($"oauth: {a.Bridge} failed: {a.Error}"));
+                break;
             case ControlTypes.ModeChanged:
                 if (m.Mode is not null) { Mode = m.Mode; _isBypass = m.Mode == "Bypass"; Raise(nameof(IsBypass)); }
                 break;
@@ -177,6 +182,7 @@ public sealed class HubViewModel : ObservableObject
                         : $"command failed: {m.Error}"));
                 else
                 {
+                    if (m.Text == "browser opened") AddEvent(EventRow.Info("oauth: browser opened for sign-in"));
                     if (m.Bridges is { Count: > 0 } b) AddEvent(EventRow.Info($"bridges added: {string.Join(", ", b)}"));
                     if (m.BridgesStale is { Count: > 0 } st) AddEvent(EventRow.Error($"config changed for running bridge(s) {string.Join(", ", st)} — restart the client to apply"));
                 }
@@ -212,6 +218,21 @@ public sealed class HubViewModel : ObservableObject
         BridgesRunning = m.BridgesRunning ?? 0;
         Clients = m.Clients ?? 0;
         ApplyContext(m.ActiveTools, m.ActiveTokens, m.TotalTokens);
+        ApplyAuth(m.Auth);
+    }
+
+    public ObservableCollection<AuthRow> Auth { get; } = new();
+    public bool HasAuth => Auth.Count > 0;
+
+    private void ApplyAuth(List<AuthInfo>? infos)
+    {
+        if (infos is null) return; // a status without the field: nothing configured, keep what we have
+        bool same = infos.Count == Auth.Count;
+        for (int i = 0; same && i < infos.Count; i++) same = Auth[i].SameAs(infos[i]);
+        if (same) return;
+        Auth.Clear();
+        foreach (var a in infos) Auth.Add(new AuthRow(a, b => _client.OAuthStartAsync(b), b => _client.OAuthRevokeAsync(b)));
+        Raise(nameof(HasAuth));
     }
 
     private void ReplaceTools(List<ToolInfo> tools)
@@ -378,6 +399,45 @@ public sealed class EventRow
         Preview = text,
         Tone = "danger",
     };
+}
+
+/// <summary>One bridge with an auth block, as the Connections card shows it.</summary>
+public sealed class AuthRow
+{
+    private readonly AuthInfo _info;
+
+    public AuthRow(AuthInfo info, Func<string, Task> start, Func<string, Task> revoke)
+    {
+        _info = info;
+        ConnectCommand = new AsyncCommand(() => start(info.Bridge));
+        RevokeCommand = new AsyncCommand(() => revoke(info.Bridge));
+    }
+
+    public string Bridge => _info.Bridge;
+    public string State => _info.State;
+    public bool IsConnected => _info.State == "connected";
+    public bool IsPending => _info.State == "pending";
+    public bool IsBroken => _info.State is "error" or "expired";
+    public bool HasToken => _info.State is "connected" or "expired";
+    public bool CanConnect => !IsPending;
+    public string ConnectLabel => HasToken ? "Reconnect" : "Connect";
+    public string Detail
+    {
+        get
+        {
+            if (_info.Error is { Length: > 0 } e) return e;
+            var parts = new List<string>(3);
+            if (_info.Provider != _info.Bridge) parts.Add($"provider {_info.Provider}");
+            if (_info.Env is { Length: > 0 } env) parts.Add($"→ ${env}");
+            if (_info.ExpiresAt is { } exp && DateTimeOffset.TryParse(exp, null, System.Globalization.DateTimeStyles.RoundtripKind, out var t))
+                parts.Add($"token until {t.ToLocalTime():HH:mm}");
+            return string.Join(" · ", parts);
+        }
+    }
+    public AsyncCommand ConnectCommand { get; }
+    public AsyncCommand RevokeCommand { get; }
+
+    public bool SameAs(AuthInfo o) => o.Bridge == _info.Bridge && o.State == _info.State && o.Error == _info.Error && o.ExpiresAt == _info.ExpiresAt;
 }
 
 public sealed class ToolRow : ObservableObject

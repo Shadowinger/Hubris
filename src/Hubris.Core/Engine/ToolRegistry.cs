@@ -22,11 +22,13 @@ public sealed class HubRuntime
     public required SecurityInterceptor Security { get; init; }
     public ToolRegistry Registry { get; set; } = null!;
     public ToolCacheStore? ToolCache { get; init; }
+    /// <summary>OAuth providers for bridges with an auth block; null when the hub runs without one.</summary>
+    public Hubris.Auth.OAuthManager? Auth { get; init; }
     /// <summary>Appended by reload_config on a socket thread while the status loop enumerates: a queue snapshots on enumerate.</summary>
     public ConcurrentQueue<McpBridge> Bridges { get; } = new();
     public int BridgeCount => Bridges.Count;
     public int BridgesRunning { get { int n = 0; foreach (var b in Bridges) if (b.IsAlive) n++; return n; } }
-    public const string Version = "1.2.0";
+    public const string Version = "1.3.0";
 }
 
 public sealed class ToolRegistry
