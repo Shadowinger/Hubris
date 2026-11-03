@@ -66,6 +66,7 @@ public sealed class StoredToken
 [JsonSerializable(typeof(ClientRegistration))]
 [JsonSerializable(typeof(TokenResponse))]
 [JsonSerializable(typeof(StoredToken))]
+[JsonSerializable(typeof(Dictionary<string, StoredToken>))]
 public sealed partial class AuthJsonContext : JsonSerializerContext
 {
 }

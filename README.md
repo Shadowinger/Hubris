@@ -52,8 +52,9 @@ client ──stdio──▶ Hubris ──stdio──▶ bridge 1 (npx …)
 - **OAuth.** A bridge with `"auth": { "type": "oauth" }` signs in through the browser: Hubris discovers the
   authorization server (RFC 9728 → RFC 8414), registers itself dynamically when the server allows it (or uses
   `clientId`/`clientSecret` from the block), runs the authorization-code flow with PKCE against a loopback
-  listener on 127.0.0.1, and keeps the token in the OS secret store: the login keychain on macOS (service
-  `com.hubris.mcp.oauth`), the Credential Manager on Windows, a 0600 file under `~/.hubris/tokens` elsewhere.
+  listener on 127.0.0.1, and keeps the token in the OS secret store: on macOS one login-keychain item (service `com.hubris.mcp.oauth`,
+  account `vault`) holding every provider's token, read once per hub and updated in place so "Always Allow" sticks;
+  the Credential Manager on Windows; a 0600 file under `~/.hubris/tokens` elsewhere.
   Tokens are never written to `config.json` or the cache database. A token inside 60 s of expiry is refreshed
   before use, a 401 triggers one refresh and retry, and concurrent calls share one refresh. For a stdio bridge
   the token goes into the child's environment under `auth.env` right before the lazy spawn. The desktop app's

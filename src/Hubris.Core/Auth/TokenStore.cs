@@ -131,10 +131,17 @@ public sealed class FileTokenStore : ISecureTokenStore
     }
 }
 
-/// <summary>Generic-password items in the login keychain, service <see cref="SecureTokenStores.Service"/>, account = provider.</summary>
+/// <summary>
+/// One generic-password item in the login keychain (service <see cref="SecureTokenStores.Service"/>, account "vault")
+/// holding a JSON map of every provider's token. One item means one authorization prompt for the whole hub, and
+/// updates go through SecItemUpdate so the user's "Always Allow" on that item survives every refresh. The map is read
+/// once per process and served from memory; the keychain is touched again only when a token changes.
+/// </summary>
 [SupportedOSPlatform("macos")]
 public sealed partial class MacOsKeychainStore : ISecureTokenStore
 {
+    public const string VaultAccount = "vault";
+
     private const string SecurityLib = "/System/Library/Frameworks/Security.framework/Security";
     private const string CoreFoundationLib = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation";
     private const uint CfStringEncodingUtf8 = 0x08000100;
@@ -142,6 +149,7 @@ public sealed partial class MacOsKeychainStore : ISecureTokenStore
 
     [LibraryImport(SecurityLib)] private static partial int SecItemAdd(nint attributes, nint result);
     [LibraryImport(SecurityLib)] private static partial int SecItemCopyMatching(nint query, out nint result);
+    [LibraryImport(SecurityLib)] private static partial int SecItemUpdate(nint query, nint attributesToUpdate);
     [LibraryImport(SecurityLib)] private static partial int SecItemDelete(nint query);
     [LibraryImport(CoreFoundationLib)] private static partial nint CFDictionaryCreate(nint allocator, nint keys, nint values, nint count, nint keyCallBacks, nint valueCallBacks);
     [LibraryImport(CoreFoundationLib)] private static partial nint CFStringCreateWithCString(nint allocator, nint cString, uint encoding);
@@ -166,7 +174,93 @@ public sealed partial class MacOsKeychainStore : ISecureTokenStore
     private static readonly nint KeyCallBacks = NativeLibrary.GetExport(CoreFoundation, "kCFTypeDictionaryKeyCallBacks");     // address of the struct
     private static readonly nint ValueCallBacks = NativeLibrary.GetExport(CoreFoundation, "kCFTypeDictionaryValueCallBacks");
 
+    private readonly object _gate = new();
+    private Dictionary<string, StoredToken>? _vault;
+
     public StoredToken? Get(string account)
+    {
+        lock (_gate)
+        {
+            var vault = Load();
+            if (vault.TryGetValue(account, out var t)) return t;
+            // Items written before the vault existed (one per provider): adopt them once, so the old prompts go away.
+            var legacy = ReadItem(account);
+            if (legacy is null) return null;
+            vault[account] = legacy;
+            WriteVault(vault);
+            DeleteItem(account);
+            Log.Info($"keychain: moved '{account}' into the Hubris vault item");
+            return legacy;
+        }
+    }
+
+    public void Set(string account, StoredToken token)
+    {
+        lock (_gate)
+        {
+            var vault = Load();
+            vault[account] = token;
+            WriteVault(vault);
+        }
+    }
+
+    public void Delete(string account)
+    {
+        lock (_gate)
+        {
+            var vault = Load();
+            if (vault.Remove(account)) WriteVault(vault);
+            DeleteItem(account); // a legacy item of that name, if any
+        }
+    }
+
+    private Dictionary<string, StoredToken> Load()
+    {
+        if (_vault is not null) return _vault;
+        byte[]? json = ReadBytes(VaultAccount);
+        Dictionary<string, StoredToken>? map = null;
+        if (json is not null)
+        {
+            try { map = JsonSerializer.Deserialize(json, AuthJsonContext.Default.DictionaryStringStoredToken); }
+            catch (JsonException ex) { Log.Warn($"keychain vault unreadable, starting empty: {ex.Message}"); }
+        }
+        return _vault = map ?? new Dictionary<string, StoredToken>(StringComparer.Ordinal);
+    }
+
+    /// <summary>SecItemUpdate first: a delete + add would throw away the ACL the user granted with "Always Allow".</summary>
+    private void WriteVault(Dictionary<string, StoredToken> vault)
+    {
+        byte[] json = JsonSerializer.SerializeToUtf8Bytes(vault, AuthJsonContext.Default.DictionaryStringStoredToken);
+        nint service = CfString(SecureTokenStores.Service), acct = CfString(VaultAccount), data = CfData(json);
+        nint query = CfDict([KSecClass, KSecAttrService, KSecAttrAccount], [KSecClassGenericPassword, service, acct]);
+        nint update = CfDict([KSecValueData], [data]);
+        nint add = 0;
+        try
+        {
+            int status = SecItemUpdate(query, update);
+            if (status == ErrSecItemNotFound)
+            {
+                add = CfDict([KSecClass, KSecAttrService, KSecAttrAccount, KSecValueData], [KSecClassGenericPassword, service, acct, data]);
+                status = SecItemAdd(add, 0);
+            }
+            if (status != 0) throw new IOException($"keychain write failed (OSStatus {status})");
+        }
+        finally
+        {
+            CFRelease(query); CFRelease(update); if (add != 0) CFRelease(add);
+            CFRelease(service); CFRelease(acct); CFRelease(data);
+        }
+    }
+
+    private static StoredToken? ReadItem(string account)
+    {
+        byte[]? json = ReadBytes(account);
+        if (json is null) return null;
+        try { return JsonSerializer.Deserialize(json, AuthJsonContext.Default.StoredToken); }
+        catch (JsonException ex) { Log.Warn($"keychain item '{account}' unreadable: {ex.Message}"); return null; }
+    }
+
+    private static byte[]? ReadBytes(string account)
     {
         nint service = CfString(SecureTokenStores.Service), acct = CfString(account);
         nint query = CfDict([KSecClass, KSecAttrService, KSecAttrAccount, KSecReturnData, KSecMatchLimit],
@@ -181,29 +275,14 @@ public sealed partial class MacOsKeychainStore : ISecureTokenStore
                 int len = checked((int)CFDataGetLength(data));
                 var bytes = new byte[len];
                 Marshal.Copy(CFDataGetBytePtr(data), bytes, 0, len);
-                return JsonSerializer.Deserialize(bytes, AuthJsonContext.Default.StoredToken);
+                return bytes;
             }
             finally { CFRelease(data); }
         }
         finally { CFRelease(query); CFRelease(service); CFRelease(acct); }
     }
 
-    public void Set(string account, StoredToken token)
-    {
-        Delete(account); // SecItemAdd refuses a duplicate; delete + add is the simplest update
-        byte[] json = JsonSerializer.SerializeToUtf8Bytes(token, AuthJsonContext.Default.StoredToken);
-        nint service = CfString(SecureTokenStores.Service), acct = CfString(account), data = CfData(json);
-        nint attrs = CfDict([KSecClass, KSecAttrService, KSecAttrAccount, KSecValueData],
-                            [KSecClassGenericPassword, service, acct, data]);
-        try
-        {
-            int status = SecItemAdd(attrs, 0);
-            if (status != 0) throw new IOException($"keychain write failed (OSStatus {status})");
-        }
-        finally { CFRelease(attrs); CFRelease(service); CFRelease(acct); CFRelease(data); }
-    }
-
-    public void Delete(string account)
+    private static void DeleteItem(string account)
     {
         nint service = CfString(SecureTokenStores.Service), acct = CfString(account);
         nint query = CfDict([KSecClass, KSecAttrService, KSecAttrAccount], [KSecClassGenericPassword, service, acct]);

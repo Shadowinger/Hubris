@@ -244,6 +244,23 @@ public class AuthTests : IDisposable
         }
         Assert.Null(store.Get(account));
         store.Delete(account); // deleting twice is fine
+
+        if (OperatingSystem.IsMacOS())
+        {
+            // The vault item is shared: a second process-like instance reads what the first wrote, without the first's cache.
+            var a = new MacOsKeychainStore();
+            var b = new MacOsKeychainStore();
+            string acc2 = account + "-b";
+            try
+            {
+                a.Set(account, new StoredToken { AccessToken = "va", TokenEndpoint = "x", ClientId = "c" });
+                a.Set(acc2, new StoredToken { AccessToken = "vb", TokenEndpoint = "x", ClientId = "c" });
+                Assert.Equal("va", b.Get(account)!.AccessToken);
+                Assert.Equal("vb", b.Get(acc2)!.AccessToken);
+            }
+            finally { a.Delete(account); a.Delete(acc2); }
+            Assert.Null(new MacOsKeychainStore().Get(acc2));
+        }
     }
 
     [Fact]
