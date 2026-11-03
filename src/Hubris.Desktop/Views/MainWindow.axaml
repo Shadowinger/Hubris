@@ -25,6 +25,8 @@
 
                 <Button DockPanel.Dock="Top" Classes="ghost" Classes.on="{Binding ShowConfig}" Command="{Binding ShowConfigCommand}"
                         HorizontalAlignment="Stretch" Padding="8,5" Content="Configurator &amp; launcher" />
+                <Button DockPanel.Dock="Top" Classes="ghost" Classes.on="{Binding ShowCatalog}" Command="{Binding ShowCatalogCommand}"
+                        HorizontalAlignment="Stretch" Padding="8,5" Margin="0,2,0,0" Content="Known servers" />
 
                 <DockPanel DockPanel.Dock="Top" Margin="6,16,2,6">
                     <Button DockPanel.Dock="Right" Classes="ghost" Command="{Binding RescanCommand}" Padding="6,1" MinHeight="20" FontSize="11" Content="Rescan" ToolTip.Tip="Rescan the runtime directory" />
@@ -279,6 +281,46 @@
         </Grid>
         </Panel>
 
+        <!-- ============================================================ known servers -->
+        <Panel Grid.Column="1" IsVisible="{Binding ShowCatalog}">
+        <Grid DataContext="{Binding Config}" x:DataType="vm:ConfigViewModel" RowDefinitions="Auto,Auto,*,Auto" Margin="20,14,20,16">
+            <StackPanel Grid.Row="0" Spacing="3">
+                <TextBlock Classes="h1" Text="Known servers" />
+                <TextBlock Classes="secondary" TextWrapping="Wrap" Text="Remote MCP servers from the Claude connector directory, or anything in the public MCP registry. Add writes the bridge to config.json; sign in with Connect on the hub dashboard." />
+            </StackPanel>
+            <DockPanel Grid.Row="1" Margin="0,14,0,8">
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6">
+                    <TextBox Width="260" Text="{Binding CatalogQuery}" PlaceholderText="search the public MCP registry" />
+                    <Button Command="{Binding SearchCatalogCommand}" Content="Search" />
+                    <Button Classes="ghost" Command="{Binding ResetCatalogCommand}" Content="Directory" />
+                </StackPanel>
+                <TextBlock Classes="muted" FontSize="11" VerticalAlignment="Center" Margin="0,0,16,0" TextTrimming="CharacterEllipsis" Text="{Binding CatalogNote}" />
+            </DockPanel>
+            <Border Grid.Row="2" Classes="card" Padding="0" ClipToBounds="True">
+                <ScrollViewer>
+                    <ItemsControl Classes="rows" ItemsSource="{Binding Catalog}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:CatalogRow">
+                                <Border Classes="row">
+                                    <Grid ColumnDefinitions="200,Auto,*,Auto" ColumnSpacing="10">
+                                        <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                                            <TextBlock Classes="strong" FontWeight="Medium" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Classes="mono muted" FontSize="11" Text="{Binding Url}" TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                        <Border Grid.Column="1" Classes="pill" VerticalAlignment="Center"><TextBlock Text="{Binding Category}" /></Border>
+                                        <TextBlock Grid.Column="2" Classes="secondary" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="{Binding Description}" />
+                                        <Button Grid.Column="3" Command="{Binding AddCommand}" Content="{Binding AddLabel}" IsEnabled="{Binding CanAdd}" MinWidth="72" HorizontalContentAlignment="Center" VerticalAlignment="Center" />
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </Border>
+            <TextBlock Grid.Row="3" Classes="secondary" FontSize="12" Margin="0,8,0,0" Text="{Binding LastResult}" TextWrapping="Wrap" />
+        </Grid>
+        </Panel>
+
         <!-- ============================================================ configurator -->
         <Panel Grid.Column="1" IsVisible="{Binding ShowConfig}">
         <ScrollViewer DataContext="{Binding Config}" x:DataType="vm:ConfigViewModel" Padding="20,14,20,16">
@@ -386,33 +428,6 @@
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
-
-                        <!-- known remote servers: the Claude directory catalog, or a live registry search -->
-                        <DockPanel Margin="0,18,0,4">
-                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6">
-                                <TextBox Width="220" Text="{Binding CatalogQuery}" PlaceholderText="search the public MCP registry" />
-                                <Button Command="{Binding SearchCatalogCommand}" Content="Search" />
-                                <Button Classes="ghost" Command="{Binding ResetCatalogCommand}" Content="Known servers" />
-                            </StackPanel>
-                            <StackPanel Spacing="2" VerticalAlignment="Center">
-                                <TextBlock Classes="title" Text="Known remote servers" />
-                                <TextBlock Classes="muted" FontSize="11" Text="{Binding CatalogNote}" />
-                            </StackPanel>
-                        </DockPanel>
-                        <ScrollViewer MaxHeight="300">
-                            <ItemsControl ItemsSource="{Binding Catalog}">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate x:DataType="vm:CatalogRow">
-                                        <Grid ColumnDefinitions="190,Auto,*,Auto" ColumnSpacing="8" Margin="0,4,0,0">
-                                            <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
-                                            <Border Grid.Column="1" Classes="pill" VerticalAlignment="Center"><TextBlock Text="{Binding Category}" /></Border>
-                                            <TextBlock Grid.Column="2" Classes="mono muted" FontSize="11" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="{Binding Url}" ToolTip.Tip="{Binding Description}" />
-                                            <Button Grid.Column="3" Classes="ghost" Command="{Binding AddCommand}" Content="{Binding AddLabel}" IsEnabled="{Binding CanAdd}" />
-                                        </Grid>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </ScrollViewer>
                     </StackPanel>
                 </Border>
 

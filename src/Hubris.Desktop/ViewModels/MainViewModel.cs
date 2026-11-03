@@ -11,6 +11,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private readonly HubLauncher _launcher;
     private HubViewModel? _selectedHub;
     private bool _showConfig = true;
+    private bool _showCatalog;
 
     public MainViewModel(HubDiscovery discovery, HubLauncher launcher)
     {
@@ -22,7 +23,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             foreach (var h in Hubs.ToArray()) await h.ReloadConfigAsync();
             return Hubs.Count;
         };
-        ShowConfigCommand = new RelayCommand(() => { SelectedHub = null; ShowConfig = true; });
+        ShowConfigCommand = new RelayCommand(() => { SelectedHub = null; ShowCatalog = false; ShowConfig = true; });
+        ShowCatalogCommand = new RelayCommand(() => { SelectedHub = null; ShowConfig = false; ShowCatalog = true; });
         RescanCommand = new AsyncCommand(() => _discovery.RescanAsync());
         Hubs.CollectionChanged += (_, _) => { Raise(nameof(HasHubs)); Raise(nameof(NoHubs)); RaisePending(); };
     }
@@ -41,15 +43,18 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         set
         {
             if (!Set(ref _selectedHub, value)) return;
-            if (value is not null) ShowConfig = false;
+            if (value is not null) { ShowConfig = false; ShowCatalog = false; }
             Raise(nameof(ShowHub));
         }
     }
 
     public bool ShowConfig { get => _showConfig; private set { if (Set(ref _showConfig, value)) Raise(nameof(ShowHub)); } }
-    public bool ShowHub => !_showConfig && _selectedHub is not null;
+    /// <summary>The "Known servers" page: catalog and registry search, adds bridges straight into config.json.</summary>
+    public bool ShowCatalog { get => _showCatalog; private set { if (Set(ref _showCatalog, value)) Raise(nameof(ShowHub)); } }
+    public bool ShowHub => !_showConfig && !_showCatalog && _selectedHub is not null;
 
     public RelayCommand ShowConfigCommand { get; }
+    public RelayCommand ShowCatalogCommand { get; }
     public AsyncCommand RescanCommand { get; }
 
     public void Start()

@@ -172,12 +172,16 @@ public sealed class ConfigViewModel : ObservableObject
 
     private void AddFromCatalog(CatalogServer s)
     {
+        var cfg = SafeLoad();
         string name = s.Slug;
-        for (int n = 2; Bridges.Any(b => b.Name == name); n++) name = $"{s.Slug}-{n}";
-        var row = NewBridge();
-        row.Name = name; row.Command = s.Url; row.Args = s.Transport; row.OAuth = s.Auth == "oauth"; row.Source = "catalog";
-        Bridges.Add(row);
-        AppendLog($"{s.Name} added as bridge '{name}'. Save bridges, then {(row.OAuth ? "press Connect on the hub dashboard" : "reload the hubs")}.");
+        for (int n = 2; cfg.Bridges.Exists(b => b.Name == name); n++) name = $"{s.Slug}-{n}";
+        cfg.Bridges.Add(s.ToBridge(name));
+        try { HubrisConfigFile.Save(cfg); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { LastResult = $"✗ {ex.Message}"; AppendLog(LastResult); return; }
+        LoadBridges();
+        LastResult = $"✓ {s.Name} saved as bridge '{name}'. {(s.Auth == "oauth" ? "Press Connect on the hub dashboard to sign in." : "Running hubs pick it up on reload.")}";
+        AppendLog(LastResult);
+        _ = NotifyHubsAsync();
     }
 
     private static HubrisConfig SafeLoad()
