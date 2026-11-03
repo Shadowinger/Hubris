@@ -15,7 +15,7 @@ public sealed class OAuthException : Exception
 }
 
 /// <summary>Resolved endpoints for one MCP server, found through RFC 9728 → RFC 8414 (with the usual fallbacks).</summary>
-/// <param name="DefaultScope">scopes_supported from the protected-resource metadata, which the spec says to request when the config names none.</param>
+/// <param name="DefaultScope">scopes_supported from the protected-resource metadata (the spec's default when the config names none), plus offline_access when the authorization server offers it, so a refresh token comes back.</param>
 public sealed record OAuthEndpoints(string AuthorizationEndpoint, string TokenEndpoint, string? RegistrationEndpoint, string Resource, string? DefaultScope = null);
 
 /// <summary>
@@ -65,7 +65,9 @@ public static class OAuthPkceFlow
 
         string authz = meta?.AuthorizationEndpoint ?? issuer + "/authorize";
         string token = meta?.TokenEndpoint ?? issuer + "/token";
-        string? scope = prm?.ScopesSupported is { Count: > 0 } sc ? string.Join(' ', sc) : null;
+        var scopes = new List<string>(prm?.ScopesSupported ?? []);
+        if (meta?.ScopesSupported?.Contains("offline_access") == true && !scopes.Contains("offline_access")) scopes.Add("offline_access");
+        string? scope = scopes.Count > 0 ? string.Join(' ', scopes) : null;
         return new OAuthEndpoints(authz, token, meta?.RegistrationEndpoint, prm?.Resource ?? resource, scope);
     }
 

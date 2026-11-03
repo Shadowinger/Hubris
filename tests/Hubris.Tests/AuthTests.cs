@@ -20,9 +20,9 @@ internal sealed class FakeAuthWorld : HttpMessageHandler
     {
         string host = req.RequestUri!.Host, path = req.RequestUri.AbsolutePath;
         if (host == "mcp.test" && path == "/.well-known/oauth-protected-resource")
-            return Json("""{"resource":"https://mcp.test/mcp","authorization_servers":["https://as.test"],"scopes_supported":["openid","offline_access"]}""");
+            return Json("""{"resource":"https://mcp.test/mcp","authorization_servers":["https://as.test"],"scopes_supported":["openid"]}""");
         if (host == "as.test" && path == "/.well-known/oauth-authorization-server")
-            return Json("""{"issuer":"https://as.test","authorization_endpoint":"https://as.test/authorize","token_endpoint":"https://as.test/token","registration_endpoint":"https://as.test/register","code_challenge_methods_supported":["S256"]}""");
+            return Json("""{"issuer":"https://as.test","authorization_endpoint":"https://as.test/authorize","token_endpoint":"https://as.test/token","registration_endpoint":"https://as.test/register","code_challenge_methods_supported":["S256"],"scopes_supported":["openid","email","offline_access"]}""");
         if (host == "as.test" && path == "/register")
         {
             Registrations++;
@@ -67,7 +67,7 @@ internal sealed class FakeAuthWorld : HttpMessageHandler
         Assert.Equal("S256", q["code_challenge_method"]);
         Assert.Equal("cid-1", q["client_id"]);
         Assert.Equal("https://mcp.test/mcp", q["resource"]);
-        Assert.Equal("openid offline_access", q["scope"]); // scopes_supported from the resource metadata, nothing configured
+        Assert.Equal("openid offline_access", q["scope"]); // resource scopes_supported + offline_access the AS offers, nothing configured
         Challenge = q["code_challenge"];
         State = q["state"];
         string redirect = q["redirect_uri"];
