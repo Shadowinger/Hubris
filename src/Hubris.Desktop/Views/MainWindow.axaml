@@ -221,10 +221,23 @@
                                 <TextBlock Classes="mono secondary num" VerticalAlignment="Center" Text="{Binding ContextMeter}" />
                             </DockPanel>
                         </Border>
-                        <TextBox Grid.Row="1" Text="{Binding ToolFilter}" PlaceholderText="Filter tools by name or description" Margin="0,0,0,8" />
+                        <TextBox Grid.Row="1" Text="{Binding ToolFilter}" PlaceholderText="Search tools by name or description; groups open when something matches" Margin="0,0,0,8" />
                         <Border Grid.Row="2" Classes="card" Padding="0" ClipToBounds="True">
                             <ScrollViewer>
-                                <ItemsControl Classes="rows" ItemsSource="{Binding FilteredTools}">
+                                <ItemsControl ItemsSource="{Binding ToolGroups}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:ToolGroup">
+                                            <Expander Classes="group" IsExpanded="{Binding IsExpanded}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                                                <Expander.Header>
+                                                    <DockPanel>
+                                                        <TextBlock DockPanel.Dock="Right" Classes="mono muted num" FontSize="11" VerticalAlignment="Center" Text="{Binding Summary}" />
+                                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                                            <TextBlock Classes="strong" FontWeight="Medium" VerticalAlignment="Center" Text="{Binding Name}" />
+                                                            <Border Classes="pill" VerticalAlignment="Center"><TextBlock Classes="num" Text="{Binding CountText}" /></Border>
+                                                        </StackPanel>
+                                                    </DockPanel>
+                                                </Expander.Header>
+                                <ItemsControl Classes="rows" ItemsSource="{Binding Tools}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate x:DataType="vm:ToolRow">
                                             <Border Classes="row">
@@ -251,6 +264,10 @@
                                                     <Button Grid.Column="5" Classes="ghost" Command="{Binding ForgetCommand}" Content="Forget" IsVisible="{Binding HasDecision}" VerticalAlignment="Center" HorizontalContentAlignment="Center" ToolTip.Tip="Drop the remembered decision; this tool will be held for approval again" />
                                                 </Grid>
                                             </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                            </Expander>
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>

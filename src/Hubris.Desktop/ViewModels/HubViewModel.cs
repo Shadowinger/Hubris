@@ -121,7 +121,8 @@ public sealed class HubViewModel : ObservableObject
     public ObservableCollection<EventRow> Events { get; } = new();
     public EventRow? SelectedEvent { get => _selectedEvent; set => Set(ref _selectedEvent, value); }
     public ObservableCollection<ToolRow> Tools { get; } = new();
-    public ObservableCollection<ToolRow> FilteredTools { get; } = new();
+    /// <summary>Tools that match the filter, one group per provider (bridge name, "Hubris" for built-ins).</summary>
+    public ObservableCollection<ToolGroup> ToolGroups { get; } = new();
     public string ToolFilter { get => _toolFilter; set { if (Set(ref _toolFilter, value)) ApplyToolFilter(); } }
 
     // ---------------------------------------------------------------- commands
@@ -252,11 +253,12 @@ public sealed class HubViewModel : ObservableObject
 
     private void ApplyToolFilter()
     {
-        FilteredTools.Clear();
         string f = _toolFilter.Trim();
-        foreach (var t in Tools)
-            if (f.Length == 0 || t.Name.Contains(f, StringComparison.OrdinalIgnoreCase) || t.Description.Contains(f, StringComparison.OrdinalIgnoreCase))
-                FilteredTools.Add(t);
+        var expanded = ToolGroups.ToDictionary(g => g.Name, g => g.IsExpanded, StringComparer.Ordinal);
+        ToolGroups.Clear();
+        var matches = Tools.Where(t => f.Length == 0 || t.Name.Contains(f, StringComparison.OrdinalIgnoreCase) || t.Description.Contains(f, StringComparison.OrdinalIgnoreCase));
+        foreach (var g in matches.GroupBy(t => t.IsBridged ? t.Bridge : "Hubris").OrderBy(g => g.Key == "Hubris" ? "" : g.Key, StringComparer.Ordinal))
+            ToolGroups.Add(new ToolGroup(g.Key, g.ToList(), f.Length > 0 || expanded.GetValueOrDefault(g.Key, g.Key == "Hubris")));
     }
 
     private void AddEvent(EventRow row)
@@ -438,6 +440,28 @@ public sealed class AuthRow
     public AsyncCommand RevokeCommand { get; }
 
     public bool SameAs(AuthInfo o) => o.Bridge == _info.Bridge && o.State == _info.State && o.Error == _info.Error && o.ExpiresAt == _info.ExpiresAt;
+}
+
+/// <summary>One provider's tools in the Tools tab, collapsible.</summary>
+public sealed class ToolGroup : ObservableObject
+{
+    private bool _expanded;
+
+    public ToolGroup(string name, List<ToolRow> tools, bool expanded)
+    {
+        Name = name;
+        Tools = tools;
+        _expanded = expanded;
+        int active = tools.Count(t => t.Pinned || t.Unlocked);
+        int tokens = tools.Sum(t => t.Tokens);
+        Summary = $"{active} active · ~{tokens} tok";
+    }
+
+    public string Name { get; }
+    public List<ToolRow> Tools { get; }
+    public string CountText => Tools.Count == 1 ? "1 tool" : $"{Tools.Count} tools";
+    public string Summary { get; }
+    public bool IsExpanded { get => _expanded; set => Set(ref _expanded, value); }
 }
 
 public sealed class ToolRow : ObservableObject

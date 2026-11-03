@@ -97,6 +97,32 @@
         <Setter Property="BorderThickness" Value="0" />
     </Style>
 
+    <!-- tool groups: one expander per provider, flat on the card -->
+    <Style Selector="Expander.group">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="CornerRadius" Value="0" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="MinHeight" Value="0" />
+    </Style>
+    <Style Selector="Expander.group /template/ ToggleButton#PART_toggle">
+        <Setter Property="Background" Value="#0F1013" />
+        <Setter Property="BorderBrush" Value="#16181D" />
+        <Setter Property="BorderThickness" Value="0,0,0,1" />
+        <Setter Property="CornerRadius" Value="0" />
+        <Setter Property="Padding" Value="12,8" />
+        <Setter Property="MinHeight" Value="0" />
+    </Style>
+    <Style Selector="Expander.group /template/ ToggleButton#PART_toggle:pointerover /template/ Border">
+        <Setter Property="Background" Value="#14161B" />
+    </Style>
+    <Style Selector="Expander.group /template/ Border#ExpanderContent">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0,0,0,1" />
+        <Setter Property="BorderBrush" Value="#16181D" />
+        <Setter Property="Padding" Value="0" />
+    </Style>
+
     <!-- ============================================================ pills -->
     <Style Selector="Border.pill">
         <Setter Property="CornerRadius" Value="4" />
