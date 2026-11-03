@@ -15,7 +15,8 @@ public sealed class OAuthException : Exception
 }
 
 /// <summary>Resolved endpoints for one MCP server, found through RFC 9728 → RFC 8414 (with the usual fallbacks).</summary>
-public sealed record OAuthEndpoints(string AuthorizationEndpoint, string TokenEndpoint, string? RegistrationEndpoint, string Resource);
+/// <param name="DefaultScope">scopes_supported from the protected-resource metadata, which the spec says to request when the config names none.</param>
+public sealed record OAuthEndpoints(string AuthorizationEndpoint, string TokenEndpoint, string? RegistrationEndpoint, string Resource, string? DefaultScope = null);
 
 /// <summary>
 /// The authorization-code + PKCE dance, in plain HttpClient and one TcpListener: discover, (register,) open the
@@ -64,7 +65,8 @@ public static class OAuthPkceFlow
 
         string authz = meta?.AuthorizationEndpoint ?? issuer + "/authorize";
         string token = meta?.TokenEndpoint ?? issuer + "/token";
-        return new OAuthEndpoints(authz, token, meta?.RegistrationEndpoint, prm?.Resource ?? resource);
+        string? scope = prm?.ScopesSupported is { Count: > 0 } sc ? string.Join(' ', sc) : null;
+        return new OAuthEndpoints(authz, token, meta?.RegistrationEndpoint, prm?.Resource ?? resource, scope);
     }
 
     private static async Task<T?> GetJsonAsync<T>(HttpClient http, string url, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> type, CancellationToken ct) where T : class

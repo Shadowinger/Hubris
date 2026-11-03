@@ -110,11 +110,12 @@ public sealed class OAuthTokenProvider
             var ep = await OAuthPkceFlow.DiscoverAsync(_http, resource, _resourceUrl is null ? null : _spec.Issuer, ct).ConfigureAwait(false);
 
             using var listener = new OAuthPkceFlow.LoopbackListener();
+            string? scope = _spec.Scope ?? ep.DefaultScope;
             string? clientId = _spec.ClientId, clientSecret = _spec.ClientSecret;
             if (string.IsNullOrEmpty(clientId))
             {
                 if (ep.RegistrationEndpoint is null) throw new OAuthException($"bridge '{Bridge}': the server offers no dynamic client registration; set auth.clientId");
-                var reg = await OAuthPkceFlow.RegisterAsync(_http, ep.RegistrationEndpoint, listener.RedirectUri, _spec.Scope, ct).ConfigureAwait(false);
+                var reg = await OAuthPkceFlow.RegisterAsync(_http, ep.RegistrationEndpoint, listener.RedirectUri, scope, ct).ConfigureAwait(false);
                 clientId = reg.ClientId!;
                 clientSecret = reg.ClientSecret;
             }
@@ -123,7 +124,7 @@ public sealed class OAuthTokenProvider
             Span<byte> rnd = stackalloc byte[16];
             RandomNumberGenerator.Fill(rnd);
             string state = Base64Url.EncodeToString(rnd);
-            string url = OAuthPkceFlow.BuildAuthorizeUrl(ep.AuthorizationEndpoint, clientId, listener.RedirectUri, challenge, state, _spec.Scope, ep.Resource);
+            string url = OAuthPkceFlow.BuildAuthorizeUrl(ep.AuthorizationEndpoint, clientId, listener.RedirectUri, challenge, state, scope, ep.Resource);
             Log.Info($"oauth '{Bridge}': opening the browser at {ep.AuthorizationEndpoint}");
             _openBrowser(url);
 
@@ -144,7 +145,7 @@ public sealed class OAuthTokenProvider
                 ClientId = clientId,
                 ClientSecret = clientSecret,
                 Resource = ep.Resource,
-                Scope = tr.Scope ?? _spec.Scope,
+                Scope = tr.Scope ?? scope,
             });
             LastError = null;
             SetState("connected");
