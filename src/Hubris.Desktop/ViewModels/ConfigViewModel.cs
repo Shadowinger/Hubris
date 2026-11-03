@@ -46,7 +46,10 @@ public sealed class ConfigViewModel : ObservableObject
         ScanProjectsCommand = new RelayCommand(ScanProjects, () => Directory.Exists(_projectRoot));
         BrowseProjectRootCommand = new AsyncCommand(async () => { if (PickFolder is { } pick && await pick() is { } dir) ProjectRoot = dir; });
         SaveBridgesCommand = new RelayCommand(SaveBridges);
+        SearchCatalogCommand = new AsyncCommand(SearchCatalogAsync);
+        ResetCatalogCommand = new RelayCommand(() => ShowKnownCatalog());
         LoadBridges();
+        LoadCatalog();
         ScanClients();
     }
 
@@ -77,6 +80,7 @@ public sealed class ConfigViewModel : ObservableObject
                     // Remote server: the command box carries the URL, the argument box the transport; headers stay in config.json.
                     row.Command = b.Url!; row.Args = string.Equals(b.Transport, "sse", StringComparison.OrdinalIgnoreCase) ? "sse" : "http";
                     row.EnvCount = b.Headers?.Count ?? 0;
+                    row.OAuth = b.Auth is not null;
                 }
                 else
                 {
@@ -101,7 +105,11 @@ public sealed class ConfigViewModel : ObservableObject
             if (row.IsRemote)
             {
                 string transport = row.Args.Trim().Equals("sse", StringComparison.OrdinalIgnoreCase) ? "sse" : "http";
-                cfg.Bridges.Add(new BridgeConfig { Name = row.Name.Trim(), Url = row.Command.Trim(), Transport = transport, Headers = prev?.Headers, Source = source });
+                cfg.Bridges.Add(new BridgeConfig
+                {
+                    Name = row.Name.Trim(), Url = row.Command.Trim(), Transport = transport, Headers = prev?.Headers, Source = source,
+                    Auth = row.OAuth ? prev?.Auth ?? new BridgeAuthConfig() : null, // the block keeps clientId/env the user typed into the file
+                });
                 continue;
             }
             cfg.Bridges.Add(new BridgeConfig
@@ -114,6 +122,62 @@ public sealed class ConfigViewModel : ObservableObject
         LastResult = $"✓ {cfg.Bridges.Count} bridge(s) saved to {ConfigPath}.";
         AppendLog(LastResult);
         _ = NotifyHubsAsync();
+    }
+
+    // ---------------------------------------------------------------- known remote servers
+    private static readonly HttpClient RegistryHttp = new() { Timeout = TimeSpan.FromSeconds(15) };
+    private RemoteCatalog _known = new();
+    private string _catalogQuery = "", _catalogNote = "";
+
+    public ObservableCollection<CatalogRow> Catalog { get; } = new();
+    public string CatalogQuery { get => _catalogQuery; set => Set(ref _catalogQuery, value); }
+    public string CatalogNote { get => _catalogNote; private set => Set(ref _catalogNote, value); }
+    public AsyncCommand SearchCatalogCommand { get; }
+    public RelayCommand ResetCatalogCommand { get; }
+
+    private void LoadCatalog()
+    {
+        try
+        {
+            using var s = Avalonia.Platform.AssetLoader.Open(new Uri("avares://Hubris.Desktop/Assets/remote-servers.json"));
+            _known = RemoteCatalog.Load(s);
+        }
+        catch (Exception ex) { AppendLog($"catalog unreadable: {ex.Message}"); }
+        ShowKnownCatalog();
+    }
+
+    private void ShowKnownCatalog() => ShowCatalog(_known.Servers, $"{_known.Servers.Count} servers from the Claude connector directory ({_known.Updated}); type to search the public registry");
+
+    private void ShowCatalog(IEnumerable<CatalogServer> servers, string note)
+    {
+        Catalog.Clear();
+        foreach (var s in servers) Catalog.Add(new CatalogRow(s, AddFromCatalog, Bridges.Any(b => b.Command.Trim() == s.Url)));
+        CatalogNote = note;
+    }
+
+    private async Task SearchCatalogAsync()
+    {
+        string q = CatalogQuery.Trim();
+        if (q.Length == 0) { ShowKnownCatalog(); return; }
+        try
+        {
+            var found = await RemoteCatalog.SearchRegistryAsync(RegistryHttp, q, CancellationToken.None);
+            ShowCatalog(found, $"{found.Count} server(s) with a remote endpoint in registry.modelcontextprotocol.io for \"{q}\" (third-party wrappers included)");
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
+        {
+            CatalogNote = $"registry search failed: {ex.Message}";
+        }
+    }
+
+    private void AddFromCatalog(CatalogServer s)
+    {
+        string name = s.Slug;
+        for (int n = 2; Bridges.Any(b => b.Name == name); n++) name = $"{s.Slug}-{n}";
+        var row = NewBridge();
+        row.Name = name; row.Command = s.Url; row.Args = s.Transport; row.OAuth = s.Auth == "oauth"; row.Source = "catalog";
+        Bridges.Add(row);
+        AppendLog($"{s.Name} added as bridge '{name}'. Save bridges, then {(row.OAuth ? "press Connect on the hub dashboard" : "reload the hubs")}.");
     }
 
     private static HubrisConfig SafeLoad()
@@ -389,11 +453,37 @@ public sealed class BridgeRow : ObservableObject
     public bool IsRemote => _command.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || _command.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
     public string ArgsPlaceholder => IsRemote ? "transport: http (default) or sse" : "arguments (-y @modelcontextprotocol/server-github)";
     public string Source { get => _source; set { if (Set(ref _source, value)) Raise(nameof(HasSource)); } }
+    private bool _oauth;
+    /// <summary>Remote row: sign in through the browser instead of static headers.</summary>
+    public bool OAuth { get => _oauth; set => Set(ref _oauth, value); }
     public bool HasSource => _source.Length > 0;
     public int EnvCount { get => _envCount; set { if (Set(ref _envCount, value)) { Raise(nameof(EnvText)); Raise(nameof(HasEnv)); } } }
     public bool HasEnv => _envCount > 0;
     public string EnvText => IsRemote ? $"{_envCount} headers" : $"{_envCount} env";
     public RelayCommand? RemoveCommand { get; set; }
+}
+
+/// <summary>One catalog or registry entry with its Add button.</summary>
+public sealed class CatalogRow : ObservableObject
+{
+    private bool _added;
+
+    public CatalogRow(CatalogServer server, Action<CatalogServer> add, bool added)
+    {
+        Server = server;
+        _added = added;
+        AddCommand = new RelayCommand(() => { add(server); Added = true; });
+    }
+
+    public CatalogServer Server { get; }
+    public string Name => Server.Name;
+    public string Category => Server.Category;
+    public string Url => Server.Url;
+    public string Description => Server.Description + (Server.Auth == "oauth" ? " · OAuth sign-in" : " · no sign-in");
+    public bool Added { get => _added; private set { if (Set(ref _added, value)) { Raise(nameof(AddLabel)); Raise(nameof(CanAdd)); } } }
+    public string AddLabel => Added ? "Added" : "Add";
+    public bool CanAdd => !Added;
+    public RelayCommand AddCommand { get; }
 }
 
 public sealed class DetectedClientRow

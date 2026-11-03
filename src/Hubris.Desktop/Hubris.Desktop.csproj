@@ -30,6 +30,7 @@
 
   <ItemGroup>
     <AvaloniaResource Include="Assets/**" />
+    <AvaloniaResource Include="../../catalog/remote-servers.json" Link="Assets/remote-servers.json" />
   </ItemGroup>
 
   <ItemGroup>

@@ -357,17 +357,45 @@
                         <ItemsControl ItemsSource="{Binding Bridges}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="vm:BridgeRow">
-                                    <Grid ColumnDefinitions="130,170,*,Auto,Auto,Auto" ColumnSpacing="8" Margin="0,6,0,0">
+                                    <Grid ColumnDefinitions="130,170,*,Auto,Auto,Auto,Auto" ColumnSpacing="8" Margin="0,6,0,0">
                                         <TextBox Grid.Column="0" Text="{Binding Name}" PlaceholderText="name (gh)" />
                                         <TextBox Grid.Column="1" Classes="mono" Text="{Binding Command}" PlaceholderText="command (npx) or https://host/mcp" />
                                         <TextBox Grid.Column="2" Classes="mono" Text="{Binding Args}" PlaceholderText="{Binding ArgsPlaceholder}" />
-                                        <Border Grid.Column="3" Classes="pill" IsVisible="{Binding HasSource}"><TextBlock Text="{Binding Source}" /></Border>
-                                        <Border Grid.Column="4" Classes="pill warn" IsVisible="{Binding HasEnv}" ToolTip.Tip="Environment variables and HTTP headers imported from the client config are kept in config.json (mode 0600)"><TextBlock Classes="num" Text="{Binding EnvText}" /></Border>
-                                        <Button Grid.Column="5" Classes="ghost" Command="{Binding RemoveCommand}" Content="Remove" />
+                                        <CheckBox Grid.Column="3" Content="OAuth" IsChecked="{Binding OAuth}" IsVisible="{Binding IsRemote}" VerticalAlignment="Center" ToolTip.Tip="Sign in through the browser; the token is kept in the OS secret store" />
+                                        <Border Grid.Column="4" Classes="pill" IsVisible="{Binding HasSource}"><TextBlock Text="{Binding Source}" /></Border>
+                                        <Border Grid.Column="5" Classes="pill warn" IsVisible="{Binding HasEnv}" ToolTip.Tip="Environment variables and HTTP headers imported from the client config are kept in config.json (mode 0600)"><TextBlock Classes="num" Text="{Binding EnvText}" /></Border>
+                                        <Button Grid.Column="6" Classes="ghost" Command="{Binding RemoveCommand}" Content="Remove" />
                                     </Grid>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
+
+                        <!-- known remote servers: the Claude directory catalog, or a live registry search -->
+                        <DockPanel Margin="0,18,0,4">
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6">
+                                <TextBox Width="220" Text="{Binding CatalogQuery}" PlaceholderText="search the public MCP registry" />
+                                <Button Command="{Binding SearchCatalogCommand}" Content="Search" />
+                                <Button Classes="ghost" Command="{Binding ResetCatalogCommand}" Content="Known servers" />
+                            </StackPanel>
+                            <StackPanel Spacing="2" VerticalAlignment="Center">
+                                <TextBlock Classes="title" Text="Known remote servers" />
+                                <TextBlock Classes="muted" FontSize="11" Text="{Binding CatalogNote}" />
+                            </StackPanel>
+                        </DockPanel>
+                        <ScrollViewer MaxHeight="300">
+                            <ItemsControl ItemsSource="{Binding Catalog}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:CatalogRow">
+                                        <Grid ColumnDefinitions="190,Auto,*,Auto" ColumnSpacing="8" Margin="0,4,0,0">
+                                            <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                                            <Border Grid.Column="1" Classes="pill" VerticalAlignment="Center"><TextBlock Text="{Binding Category}" /></Border>
+                                            <TextBlock Grid.Column="2" Classes="mono muted" FontSize="11" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="{Binding Url}" ToolTip.Tip="{Binding Description}" />
+                                            <Button Grid.Column="3" Classes="ghost" Command="{Binding AddCommand}" Content="{Binding AddLabel}" IsEnabled="{Binding CanAdd}" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
                     </StackPanel>
                 </Border>
 

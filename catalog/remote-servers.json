@@ -1,0 +1,492 @@
+{
+  "updated": "2026-11-03",
+  "source": "Claude connector directory (claude.ai/directory); DeepWiki added by hand",
+  "servers": [
+    {
+      "name": "Notion",
+      "slug": "notion",
+      "url": "https://mcp.notion.com/mcp",
+      "transport": "http",
+      "category": "docs",
+      "description": "Search, update and power workflows in your Notion workspace",
+      "auth": "oauth"
+    },
+    {
+      "name": "Atlassian",
+      "slug": "atlassian",
+      "url": "https://mcp.atlassian.com/v2/mcp",
+      "transport": "http",
+      "category": "project",
+      "description": "Jira, Confluence, Bitbucket, Loom with your existing permissions",
+      "auth": "oauth"
+    },
+    {
+      "name": "Linear",
+      "slug": "linear",
+      "url": "https://mcp.linear.app/mcp",
+      "transport": "http",
+      "category": "project",
+      "description": "Issues, projects and team workflows",
+      "auth": "oauth"
+    },
+    {
+      "name": "Asana",
+      "slug": "asana",
+      "url": "https://mcp.asana.com/v2/mcp",
+      "transport": "http",
+      "category": "project",
+      "description": "Tasks, projects and goals",
+      "auth": "oauth"
+    },
+    {
+      "name": "ClickUp",
+      "slug": "clickup",
+      "url": "https://mcp.clickup.com/mcp",
+      "transport": "http",
+      "category": "project",
+      "description": "Project management and collaboration",
+      "auth": "oauth"
+    },
+    {
+      "name": "monday.com",
+      "slug": "monday-com",
+      "url": "https://mcp.monday.com/mcp",
+      "transport": "http",
+      "category": "project",
+      "description": "Boards, projects, workflows and dashboards",
+      "auth": "oauth"
+    },
+    {
+      "name": "Trello",
+      "slug": "trello",
+      "url": "https://mcp.trello.com/v1",
+      "transport": "http",
+      "category": "project",
+      "description": "Boards, cards and checklists",
+      "auth": "oauth"
+    },
+    {
+      "name": "Sentry",
+      "slug": "sentry",
+      "url": "https://mcp.sentry.dev/mcp",
+      "transport": "http",
+      "category": "dev",
+      "description": "Search, query and debug errors",
+      "auth": "oauth"
+    },
+    {
+      "name": "Vercel",
+      "slug": "vercel",
+      "url": "https://mcp.vercel.com/",
+      "transport": "http",
+      "category": "dev",
+      "description": "Projects, deployments and logs",
+      "auth": "oauth"
+    },
+    {
+      "name": "Netlify",
+      "slug": "netlify",
+      "url": "https://netlify-mcp.netlify.app/mcp",
+      "transport": "http",
+      "category": "dev",
+      "description": "Create, deploy and manage sites",
+      "auth": "oauth"
+    },
+    {
+      "name": "Cloudflare Developer Platform",
+      "slug": "cloudflare-developer-platform",
+      "url": "https://bindings.mcp.cloudflare.com/mcp",
+      "transport": "http",
+      "category": "dev",
+      "description": "Workers, KV, storage and AI bindings",
+      "auth": "oauth"
+    },
+    {
+      "name": "BrowserStack",
+      "slug": "browserstack",
+      "url": "https://mcp.browserstack.com/mcp",
+      "transport": "http",
+      "category": "dev",
+      "description": "Plan, run and debug tests across web and mobile",
+      "auth": "oauth"
+    },
+    {
+      "name": "Supabase",
+      "slug": "supabase",
+      "url": "https://mcp.supabase.com/mcp",
+      "transport": "http",
+      "category": "data",
+      "description": "Databases, authentication and storage",
+      "auth": "oauth"
+    },
+    {
+      "name": "Neon",
+      "slug": "neon",
+      "url": "https://mcp.neon.tech/mcp",
+      "transport": "http",
+      "category": "data",
+      "description": "Postgres branches, projects and migrations",
+      "auth": "oauth"
+    },
+    {
+      "name": "MongoDB Atlas",
+      "slug": "mongodb-atlas",
+      "url": "https://mcp.mongodb.com/",
+      "transport": "http",
+      "category": "data",
+      "description": "Atlas resources and cluster data",
+      "auth": "oauth"
+    },
+    {
+      "name": "Google BigQuery",
+      "slug": "google-bigquery",
+      "url": "https://bigquery.googleapis.com/mcp",
+      "transport": "http",
+      "category": "data",
+      "description": "Datasets, tables and SQL",
+      "auth": "oauth"
+    },
+    {
+      "name": "Airtable",
+      "slug": "airtable",
+      "url": "https://mcp.airtable.com/mcp",
+      "transport": "http",
+      "category": "data",
+      "description": "Bases, tables and records",
+      "auth": "oauth"
+    },
+    {
+      "name": "Stripe",
+      "slug": "stripe",
+      "url": "https://mcp.stripe.com/",
+      "transport": "http",
+      "category": "finance",
+      "description": "Payments and financial infrastructure",
+      "auth": "oauth"
+    },
+    {
+      "name": "PayPal",
+      "slug": "paypal",
+      "url": "https://mcp.paypal.com/mcp",
+      "transport": "http",
+      "category": "finance",
+      "description": "Invoices, disputes and products",
+      "auth": "oauth"
+    },
+    {
+      "name": "Square",
+      "slug": "square",
+      "url": "https://mcp.squareup.com/mcp",
+      "transport": "http",
+      "category": "finance",
+      "description": "Transactions, merchants and payments",
+      "auth": "oauth"
+    },
+    {
+      "name": "Xero",
+      "slug": "xero",
+      "url": "https://mcp.xero.com/mcp",
+      "transport": "http",
+      "category": "finance",
+      "description": "Financial position, P&L, receivables",
+      "auth": "oauth"
+    },
+    {
+      "name": "Intuit QuickBooks",
+      "slug": "intuit-quickbooks",
+      "url": "https://ai-inc.quickbooks.intuit.com/v1/mcp",
+      "transport": "http",
+      "category": "finance",
+      "description": "Reports, cash flow and transactions",
+      "auth": "oauth"
+    },
+    {
+      "name": "HubSpot",
+      "slug": "hubspot",
+      "url": "https://mcp.hubspot.com/anthropic",
+      "transport": "http",
+      "category": "crm",
+      "description": "CRM objects, campaigns and analytics",
+      "auth": "oauth"
+    },
+    {
+      "name": "Pipedrive",
+      "slug": "pipedrive",
+      "url": "https://mcp.pipedrive.ai/mcp",
+      "transport": "http",
+      "category": "crm",
+      "description": "Deals, activities and live CRM data",
+      "auth": "oauth"
+    },
+    {
+      "name": "Intercom",
+      "slug": "intercom",
+      "url": "https://mcp.intercom.com/mcp",
+      "transport": "http",
+      "category": "crm",
+      "description": "Conversations and contacts",
+      "auth": "oauth"
+    },
+    {
+      "name": "Salesloft",
+      "slug": "salesloft",
+      "url": "https://mcp.salesloft.com/sse",
+      "transport": "sse",
+      "category": "crm",
+      "description": "Deals, engagement and pipeline",
+      "auth": "oauth"
+    },
+    {
+      "name": "ZoomInfo",
+      "slug": "zoominfo",
+      "url": "https://mcp.zoominfo.com/mcp",
+      "transport": "http",
+      "category": "crm",
+      "description": "Prospects, accounts and intent signals",
+      "auth": "oauth"
+    },
+    {
+      "name": "Nutshell CRM",
+      "slug": "nutshell-crm",
+      "url": "https://app.nutshell.com/mcp",
+      "transport": "http",
+      "category": "crm",
+      "description": "Leads, contacts and sales reports",
+      "auth": "oauth"
+    },
+    {
+      "name": "Slack",
+      "slug": "slack",
+      "url": "https://mcp.slack.com/mcp",
+      "transport": "http",
+      "category": "communication",
+      "description": "Messages, channels and canvases",
+      "auth": "oauth"
+    },
+    {
+      "name": "Gmail",
+      "slug": "gmail",
+      "url": "https://gmailmcp.googleapis.com/mcp/v1",
+      "transport": "http",
+      "category": "communication",
+      "description": "Search, drafts and labels",
+      "auth": "oauth"
+    },
+    {
+      "name": "Google Calendar",
+      "slug": "google-calendar",
+      "url": "https://calendarmcp.googleapis.com/mcp/v1",
+      "transport": "http",
+      "category": "communication",
+      "description": "Events and scheduling",
+      "auth": "oauth"
+    },
+    {
+      "name": "Microsoft 365",
+      "slug": "microsoft-365",
+      "url": "https://microsoft365.mcp.claude.com/mcp",
+      "transport": "http",
+      "category": "communication",
+      "description": "SharePoint, OneDrive, Outlook and Teams",
+      "auth": "oauth"
+    },
+    {
+      "name": "Zoom",
+      "slug": "zoom",
+      "url": "https://mcp.zoom.us/mcp/zoom/streamable",
+      "transport": "http",
+      "category": "communication",
+      "description": "Meetings, recordings and recaps",
+      "auth": "oauth"
+    },
+    {
+      "name": "Webex",
+      "slug": "webex",
+      "url": "https://mcp.webexapis.com/mcp/webex-suite",
+      "transport": "http",
+      "category": "communication",
+      "description": "Meetings, messaging and Vidcast",
+      "auth": "oauth"
+    },
+    {
+      "name": "Reclaim.ai",
+      "slug": "reclaim-ai",
+      "url": "https://mcp.reclaim.ai/",
+      "transport": "http",
+      "category": "communication",
+      "description": "Calendar scheduling and tasks",
+      "auth": "oauth"
+    },
+    {
+      "name": "Google Drive",
+      "slug": "google-drive",
+      "url": "https://drivemcp.googleapis.com/mcp/v1",
+      "transport": "http",
+      "category": "files",
+      "description": "Search, read and upload files",
+      "auth": "oauth"
+    },
+    {
+      "name": "Dropbox",
+      "slug": "dropbox",
+      "url": "https://mcp.dropbox.com/claude_app_mcp",
+      "transport": "http",
+      "category": "files",
+      "description": "Search, organize and share content",
+      "auth": "oauth"
+    },
+    {
+      "name": "Box",
+      "slug": "box",
+      "url": "https://mcp.box.com/",
+      "transport": "http",
+      "category": "files",
+      "description": "Search, edit and get insights on content",
+      "auth": "oauth"
+    },
+    {
+      "name": "Figma",
+      "slug": "figma",
+      "url": "https://mcp.figma.com/mcp",
+      "transport": "http",
+      "category": "design",
+      "description": "Design context, screenshots and diagrams",
+      "auth": "oauth"
+    },
+    {
+      "name": "Canva",
+      "slug": "canva",
+      "url": "https://mcp.canva.com/mcp",
+      "transport": "http",
+      "category": "design",
+      "description": "Search, create, autofill and export designs",
+      "auth": "oauth"
+    },
+    {
+      "name": "Webflow",
+      "slug": "webflow",
+      "url": "https://mcp.webflow.com/mcp",
+      "transport": "http",
+      "category": "design",
+      "description": "Pages, CMS content and publishing",
+      "auth": "oauth"
+    },
+    {
+      "name": "Framer",
+      "slug": "framer",
+      "url": "https://mcp.framer.com/mcp",
+      "transport": "http",
+      "category": "design",
+      "description": "Design, update and publish sites",
+      "auth": "oauth"
+    },
+    {
+      "name": "Miro",
+      "slug": "miro",
+      "url": "https://mcp.miro.com/",
+      "transport": "http",
+      "category": "design",
+      "description": "Boards, diagrams and docs",
+      "auth": "oauth"
+    },
+    {
+      "name": "Lucid",
+      "slug": "lucid",
+      "url": "https://mcp.lucid.app/mcp",
+      "transport": "http",
+      "category": "design",
+      "description": "Diagrams, org charts and mind maps",
+      "auth": "oauth"
+    },
+    {
+      "name": "Adobe",
+      "slug": "adobe",
+      "url": "https://adobe-creativity.adobe.io/mcp",
+      "transport": "http",
+      "category": "design",
+      "description": "Acrobat, assets and creative tools",
+      "auth": "oauth"
+    },
+    {
+      "name": "Contentful",
+      "slug": "contentful",
+      "url": "https://mcp.contentful.com/mcp",
+      "transport": "http",
+      "category": "content",
+      "description": "Entries, assets and content types",
+      "auth": "oauth"
+    },
+    {
+      "name": "Shopify",
+      "slug": "shopify",
+      "url": "https://setup.shopify.com/mcp",
+      "transport": "http",
+      "category": "commerce",
+      "description": "Products, orders and customers",
+      "auth": "oauth"
+    },
+    {
+      "name": "Intuit Mailchimp",
+      "slug": "intuit-mailchimp",
+      "url": "https://ai-inc.mailchimp.com/claude/mcp/v2",
+      "transport": "http",
+      "category": "marketing",
+      "description": "Campaigns and email themes",
+      "auth": "oauth"
+    },
+    {
+      "name": "Supermetrics",
+      "slug": "supermetrics",
+      "url": "https://mcp.supermetrics.com/mcp",
+      "transport": "http",
+      "category": "marketing",
+      "description": "Ads and analytics from 200+ sources",
+      "auth": "oauth"
+    },
+    {
+      "name": "Mapbox",
+      "slug": "mapbox",
+      "url": "https://mcp.mapbox.com/mcp",
+      "transport": "http",
+      "category": "other",
+      "description": "Geocoding, routing and maps",
+      "auth": "oauth"
+    },
+    {
+      "name": "Vanta",
+      "slug": "vanta",
+      "url": "https://mcp.vanta.com/mcp",
+      "transport": "http",
+      "category": "other",
+      "description": "Trust management and compliance",
+      "auth": "oauth"
+    },
+    {
+      "name": "AWS Marketplace",
+      "slug": "aws-marketplace",
+      "url": "https://marketplace-mcp.us-east-1.api.aws/mcp",
+      "transport": "http",
+      "category": "other",
+      "description": "Discover and evaluate cloud solutions",
+      "auth": "oauth"
+    },
+    {
+      "name": "DataCamp",
+      "slug": "datacamp",
+      "url": "https://mcp.datacamp.com/v1/mcp",
+      "transport": "http",
+      "category": "other",
+      "description": "Catalog and team administration",
+      "auth": "oauth"
+    },
+    {
+      "name": "DeepWiki",
+      "slug": "deepwiki",
+      "url": "https://mcp.deepwiki.com/mcp",
+      "transport": "http",
+      "category": "dev",
+      "description": "Documentation of public GitHub repositories (no sign-in)",
+      "auth": "none"
+    }
+  ]
+}

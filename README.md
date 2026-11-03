@@ -109,6 +109,11 @@ Bridges live in `~/.hubris/config.json` (mode 0600):
 }
 ```
 
+The desktop configurator has a "Known remote servers" list: 54 servers from the Claude connector directory
+(`catalog/remote-servers.json`, Notion, Linear, Atlassian, Stripe, Slack, Figma, Supabase and so on), each added
+to `config.json` with one click as a URL bridge with an OAuth block. The search box next to it queries the public
+registry at registry.modelcontextprotocol.io and lists every entry that has a remote endpoint.
+
 An `auth` block takes `provider` (secret-store account, default the bridge name; two bridges naming the same
 provider share one login), `issuer` (the MCP server URL to discover from; required for a stdio bridge),
 `clientId` / `clientSecret` (otherwise dynamic registration), `scope`, and `env` (stdio only: the variable the
@@ -158,7 +163,7 @@ tests/run.sh                        # unit tests, warning-free AOT publish, e2e 
 dotnet test tests/Hubris.Tests      # unit tests only
 ```
 
-92 xUnit tests and 68 end-to-end checks (`tests/e2e/control_test.py` drives a published binary with a Python
+98 xUnit tests and 68 end-to-end checks (`tests/e2e/control_test.py` drives a published binary with a Python
 stdio echo server as bridge, `tests/e2e/http_test.py` with a Python Streamable HTTP server). Both projects publish with `TreatWarningsAsErrors` and zero IL/AOT warnings.
 
 ## Layout
