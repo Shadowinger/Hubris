@@ -27,7 +27,6 @@ public readonly record struct RpcId(RpcIdKind Kind, long Number, string? Text)
     public static RpcId FromString(string value) => new(RpcIdKind.String, 0, value);
 
     public bool IsNone => Kind == RpcIdKind.None;
-    public bool IsNull => Kind == RpcIdKind.Null;
 
     public override string ToString() => Kind switch
     {

@@ -8,7 +8,7 @@ HOME = os.environ.get("HUBRIS_HOME") or os.path.expanduser("~/.hubris")
 RUN = os.environ.get("HUBRIS_RUNTIME_DIR") or os.path.join(HOME, "run")
 os.chdir(os.path.join(HERE, "..", ".."))  # git_smart_status below runs in the repo
 # "--child-flag" proves bridge arguments starting with "--" reach the child instead of being parsed as Hubris options (audit #8)
-hub = subprocess.Popen([BIN, "--stdio", "--compact", "--approval-timeout=5", f"--bridge=py:python3", ECHO, "--child-flag"],
+hub = subprocess.Popen([BIN, "--stdio", "--compact", "--control-trust-all", "--approval-timeout=5", f"--bridge=py:python3", ECHO, "--child-flag"],
                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
 pid = hub.pid
 stderr_lines = []
@@ -221,7 +221,7 @@ orphans = subprocess.run(["pgrep","-f",ECHO], capture_output=True, text=True).st
 check(orphans == "", f"no orphan bridge process ({orphans or 'none'})")
 
 # ===================================================================== second run: cache hit, lazy spawn
-hub2 = subprocess.Popen([BIN, "--stdio", "--compact", "--approval-timeout=5", f"--bridge=py:python3", ECHO, "--child-flag"],
+hub2 = subprocess.Popen([BIN, "--stdio", "--compact", "--control-trust-all", "--approval-timeout=5", f"--bridge=py:python3", ECHO, "--child-flag"],
                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
 err2 = []
 threading.Thread(target=lambda: [err2.append(l.rstrip()) for l in hub2.stderr], daemon=True).start()
@@ -265,7 +265,7 @@ check(hub2.returncode == 0, "second hub exited cleanly on EOF")
 # ===================================================================== third run: no CLI bridge, config.json + reload_config
 cfg_path = os.path.join(HOME, "config.json")
 json.dump({"bridges": []}, open(cfg_path, "w"))
-hub3 = subprocess.Popen([BIN, "--stdio", "--compact"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+hub3 = subprocess.Popen([BIN, "--stdio", "--compact", "--control-trust-all"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
 threading.Thread(target=lambda: [l for l in hub3.stderr], daemon=True).start()
 def rpc3(obj):
     hub3.stdin.write(json.dumps(obj) + "\n"); hub3.stdin.flush()
@@ -299,6 +299,26 @@ s3.sendall((json.dumps({"type":"cache_maintain","reqId":3}) + "\n").encode()); a
 check(ack3c["ok"], "cache_maintain ran VACUUM/ANALYZE/REINDEX")
 f3.close(); s3.close(); hub3.stdin.close(); hub3.wait(timeout=30)
 check(hub3.returncode == 0, "third hub exited cleanly")
+
+# ===================================================================== fourth run: without --control-trust-all a plain process may not steer the hub
+hub4 = subprocess.Popen([BIN, "--stdio", "--compact"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+hub4.stdin.write(json.dumps({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","clientInfo":{"name":"ctl-test-4","version":"1"}}}) + "\n"); hub4.stdin.flush()
+while "method" in json.loads(hub4.stdout.readline()): pass
+time.sleep(0.3)
+desc4 = json.load(open(os.path.join(RUN, f"{hub4.pid}.json")))
+s4 = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); s4.connect(desc4["socket"]); f4 = s4.makefile("r")
+while json.loads(f4.readline())["type"] != "hello": pass
+s4.sendall((json.dumps({"type":"set_mode","mode":"bypass","reqId":1}) + "\n").encode())
+while True:
+    ack4 = json.loads(f4.readline())
+    if ack4["type"] == "ack": break
+check(ack4["ok"] is False and "desktop app" in ack4["error"], f"set_mode from a non-desktop process is refused: {ack4['error'][:60]}")
+s4.sendall((json.dumps({"type":"get_status","reqId":2}) + "\n").encode())
+while True:
+    st4 = json.loads(f4.readline())
+    if st4["type"] == "status": break
+check(st4["mode"] == "Safe", "mode unchanged after the refused command")
+f4.close(); s4.close(); hub4.stdin.close(); hub4.wait(timeout=30)
 
 print("\n--- hub stderr (tail):"); print("\n".join(stderr_lines[-14:]))
 sys.exit(0 if ok else 1)

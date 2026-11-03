@@ -11,6 +11,8 @@ namespace Hubris.Auth;
 public interface ISecureTokenStore
 {
     StoredToken? Get(string account);
+    /// <summary>Reads past any memory copy: another hub may have refreshed this token since we last looked.</summary>
+    StoredToken? Reload(string account);
     void Set(string account, StoredToken token);
     void Delete(string account);
 }
@@ -22,12 +24,16 @@ public static class SecureTokenStores
     /// <summary>Keychain on macOS, Credential Manager on Windows, a 0600 file elsewhere; memory-cached so calls never wait on OS IPC.</summary>
     public static ISecureTokenStore ForThisOs()
     {
-        ISecureTokenStore os =
+        ISecureTokenStore? os =
             OperatingSystem.IsMacOS() ? new MacOsKeychainStore()
             : OperatingSystem.IsWindows() ? new WindowsCredentialStore()
-            : new FileTokenStore(Path.Combine(HubrisPaths.HomeDir, "tokens"));
-        return new CachingTokenStore(new FallbackTokenStore(os, new FileTokenStore(Path.Combine(HubrisPaths.HomeDir, "tokens"))));
+            : null;
+        return Build(os, new FileTokenStore(Path.Combine(HubrisPaths.HomeDir, "tokens")));
     }
+
+    /// <summary>Memory cache over the OS store with the file store as fallback; with no OS store the file store alone (never both over one directory).</summary>
+    public static ISecureTokenStore Build(ISecureTokenStore? os, FileTokenStore file)
+        => new CachingTokenStore(os is null ? file : new FallbackTokenStore(os, file));
 }
 
 /// <summary>Memory layer: a token is read from the OS once and then served from memory until it is replaced or deleted.</summary>
@@ -45,6 +51,16 @@ public sealed class CachingTokenStore : ISecureTokenStore
         {
             if (_cache.TryGetValue(account, out var t)) return t;
             t = _inner.Get(account);
+            _cache[account] = t;
+            return t;
+        }
+    }
+
+    public StoredToken? Reload(string account)
+    {
+        lock (_gate)
+        {
+            var t = _inner.Reload(account);
             _cache[account] = t;
             return t;
         }
@@ -81,6 +97,12 @@ public sealed class FallbackTokenStore : ISecureTokenStore
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Log.Warn($"token store: {ex.Message}; using the file store"); return _fallback.Get(account); }
     }
 
+    public StoredToken? Reload(string account)
+    {
+        try { return _primary.Reload(account) ?? _fallback.Reload(account); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Log.Warn($"token store: {ex.Message}; using the file store"); return _fallback.Reload(account); }
+    }
+
     public void Set(string account, StoredToken token)
     {
         try { _primary.Set(account, token); _fallback.Delete(account); }
@@ -115,13 +137,17 @@ public sealed class FileTokenStore : ISecureTokenStore
         catch (JsonException ex) { Log.Warn($"token file {path} unreadable: {ex.Message}"); return null; }
     }
 
+    public StoredToken? Reload(string account) => Get(account);
+
     public void Set(string account, StoredToken token)
     {
-        Directory.CreateDirectory(_dir);
-        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(_dir, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        // Created 0700 / 0600 from the first byte: a chmod after the write would leave a umask-sized window.
+        if (OperatingSystem.IsWindows()) Directory.CreateDirectory(_dir);
+        else Directory.CreateDirectory(_dir, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         string path = PathFor(account), tmp = path + ".tmp";
-        File.WriteAllBytes(tmp, JsonSerializer.SerializeToUtf8Bytes(token, AuthJsonContext.Default.StoredToken));
-        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(tmp, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        var options = new FileStreamOptions { Mode = FileMode.Create, Access = FileAccess.Write, Share = FileShare.None };
+        if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        using (var fs = new FileStream(tmp, options)) fs.Write(JsonSerializer.SerializeToUtf8Bytes(token, AuthJsonContext.Default.StoredToken));
         File.Move(tmp, path, overwrite: true);
     }
 
@@ -194,10 +220,20 @@ public sealed partial class MacOsKeychainStore : ISecureTokenStore
         }
     }
 
+    public StoredToken? Reload(string account)
+    {
+        lock (_gate)
+        {
+            _vault = null;
+            return Get(account);
+        }
+    }
+
     public void Set(string account, StoredToken token)
     {
         lock (_gate)
         {
+            _vault = null; // merge into what another hub may have written since we loaded
             var vault = Load();
             vault[account] = token;
             WriteVault(vault);
@@ -208,6 +244,7 @@ public sealed partial class MacOsKeychainStore : ISecureTokenStore
     {
         lock (_gate)
         {
+            _vault = null;
             var vault = Load();
             if (vault.Remove(account)) WriteVault(vault);
             DeleteItem(account); // a legacy item of that name, if any
@@ -347,21 +384,23 @@ public sealed partial class WindowsCredentialStore : ISecureTokenStore
         public nint UserName;
     }
 
-    [LibraryImport("advapi32.dll", EntryPoint = "CredWriteW")]
+    [LibraryImport("advapi32.dll", EntryPoint = "CredWriteW", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool CredWrite(ref Credential credential, uint flags);
 
-    [LibraryImport("advapi32.dll", EntryPoint = "CredReadW", StringMarshalling = StringMarshalling.Utf16)]
+    [LibraryImport("advapi32.dll", EntryPoint = "CredReadW", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool CredRead(string target, uint type, uint flags, out nint credential);
 
-    [LibraryImport("advapi32.dll", EntryPoint = "CredDeleteW", StringMarshalling = StringMarshalling.Utf16)]
+    [LibraryImport("advapi32.dll", EntryPoint = "CredDeleteW", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool CredDelete(string target, uint type, uint flags);
 
     [LibraryImport("advapi32.dll")] private static partial void CredFree(nint buffer);
 
     private static string Target(string account) => SecureTokenStores.Service + "/" + account;
+
+    public StoredToken? Reload(string account) => Get(account);
 
     public unsafe StoredToken? Get(string account)
     {

@@ -43,7 +43,7 @@ public sealed class BridgeHost
             foreach (var def in tools) _registry.Register(new BridgedTool(bridge, def));
             _rt.Bridges.Enqueue(bridge);
             Log.Info($"bridge '{spec.Name}' exposes {tools.Count} tool(s)" + (bridge.ServerInfo is { } si ? $" ({si.Name} {si.Version})" : string.Empty));
-            Cache(bridge, tools);
+            Cache(_rt, bridge, tools);
             return bridge;
         }
         catch (NotSignedInException)
@@ -61,9 +61,9 @@ public sealed class BridgeHost
         }
     }
 
-    public void Cache(McpBridge bridge, List<ToolDefinition> tools)
+    public static void Cache(HubRuntime rt, McpBridge bridge, List<ToolDefinition> tools)
     {
-        if (_rt.ToolCache is not { } cache) return;
+        if (rt.ToolCache is not { } cache) return;
         int tokens = 0;
         foreach (var def in tools) tokens += ToolRegistry.EstimateTokens(new BridgedTool(bridge, def));
         cache.Put(bridge.Name, bridge.ConfigHash, tools, tokens);

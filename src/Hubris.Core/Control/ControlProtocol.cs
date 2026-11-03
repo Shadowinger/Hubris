@@ -150,7 +150,6 @@ public static class ControlTypes
     public const string CacheMaintain = "cache_maintain";
     public const string Shutdown = "shutdown";
     public const string OAuthStart = "oauth_start";
-    public const string OAuthStatus = "oauth_status";
     public const string OAuthRevoke = "oauth_revoke";
 }
 

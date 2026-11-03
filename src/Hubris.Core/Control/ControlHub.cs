@@ -250,9 +250,40 @@ public sealed class ControlHub : IAsyncDisposable
             await client.SendAsync(ApprovalRequestMessage(p)).ConfigureAwait(false);
     }
 
+    /// <summary>Commands that change what the hub does. Only the desktop app may send them (or anyone with --control-trust-all).</summary>
+    private static readonly HashSet<string> Privileged = new(StringComparer.Ordinal)
+    {
+        ControlTypes.SetMode, ControlTypes.Approve, ControlTypes.Reveal, ControlTypes.Lock, ControlTypes.Forget,
+        ControlTypes.ClearCache, ControlTypes.ReloadConfig, ControlTypes.CacheMaintain, ControlTypes.Shutdown,
+        ControlTypes.OAuthStart, ControlTypes.OAuthRevoke,
+    };
+
+    /// <summary>Accept privileged commands from any local process (tests, scripts). Off by default.</summary>
+    public bool TrustAllClients { get; set; }
+
+    private bool IsTrusted(ControlClient client)
+    {
+        if (TrustAllClients) return true;
+        string? exe = client.PeerPath is null ? null : Path.GetFileNameWithoutExtension(client.PeerPath);
+        return string.Equals(exe, "Hubris.Desktop", StringComparison.Ordinal);
+    }
+
     private async ValueTask OnCommandAsync(ControlClient client, ControlMessage cmd)
     {
         var ack = new ControlMessage { Type = ControlTypes.Ack, ReqId = cmd.ReqId, Ok = true, Timestamp = DateTime.UtcNow.ToString("O") };
+        if (Privileged.Contains(cmd.Type))
+        {
+            // The socket is 0600, but the bridges and shell tools the hub runs are the same user: the kernel's view of
+            // the peer process is the only thing that separates the desktop app from a tool call that found the socket.
+            if (!IsTrusted(client))
+            {
+                Log.Warn($"control client {client.Id} (pid {client.PeerPid}, {client.PeerPath ?? "unknown exe"}) is not the desktop app; '{cmd.Type}' refused");
+                Fail(ack, $"'{cmd.Type}' is only accepted from the Hubris desktop app (peer: {client.PeerPath ?? "unknown"}); start the hub with --control-trust-all to allow any local process");
+                await client.SendAsync(ack).ConfigureAwait(false);
+                return;
+            }
+            Log.Info($"control: {cmd.Type} from pid {client.PeerPid} ({client.PeerPath ?? "?"})");
+        }
         try
         {
             switch (cmd.Type)
@@ -351,12 +382,6 @@ public sealed class ControlHub : IAsyncDisposable
                     break;
                 }
 
-                case ControlTypes.OAuthStatus:
-                    var st = OAuthMessage(ControlTypes.Status);
-                    st.ReqId = cmd.ReqId;
-                    await client.SendAsync(st).ConfigureAwait(false);
-                    return;
-
                 case ControlTypes.OAuthStart:
                 case ControlTypes.OAuthRevoke:
                 {
@@ -369,7 +394,7 @@ public sealed class ControlHub : IAsyncDisposable
                     _ = Task.Run(async () =>
                     {
                         try { await provider.LoginAsync(_lifetime.Token).ConfigureAwait(false); }
-                        catch (Hubris.Auth.OAuthException) { return; /* logged and carried in the state */ }
+                        catch (Exception ex) { if (ex is not Hubris.Auth.OAuthException) Log.Warn($"oauth '{bridgeName}': {ex.Message}"); return; } // state carries the error
                         // Signed in: the bridge that was waiting (or whose tools are stale) is listed now.
                         foreach (var b in _rt.Bridges)
                             if (b.Name == bridgeName) await RefreshBridgeAsync(b).ConfigureAwait(false);
@@ -417,7 +442,7 @@ public sealed class ControlHub : IAsyncDisposable
         {
             var tools = await bridge.StartAsync(_lifetime.Token).ConfigureAwait(false);
             if (ReplaceBridgeTools is { } replace) await replace(bridge, tools).ConfigureAwait(false);
-            _bridgeHost.Cache(bridge, tools);
+            BridgeHost.Cache(_rt, bridge, tools);
         }
         catch (Exception ex)
         {

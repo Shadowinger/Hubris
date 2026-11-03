@@ -50,12 +50,10 @@ public sealed class ExternalMcpBridge : McpBridge
     public Func<CancellationToken, bool, Task<string?>>? TokenSource { get; set; }
 
     public string Command => _command;
-    public IReadOnlyList<string> Args => _args;
     public IReadOnlyDictionary<string, string> Env { get; }
     public override string Launch => _command;
     public override bool IsStarted => _process is not null;
     public override bool IsAlive => _process is { HasExited: false };
-    public int? ExitCode => _process is { HasExited: true } p ? p.ExitCode : null;
 
     // ------------------------------------------------------------------ lifecycle
 
@@ -90,6 +88,7 @@ public sealed class ExternalMcpBridge : McpBridge
         };
         foreach (var a in _args) psi.ArgumentList.Add(a);
         foreach (var kv in Env) psi.Environment[kv.Key] = kv.Value;
+        psi.Environment["HUBRIS_PARENT"] = Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture); // a child Hubris refuses to start (see Program)
         if (TokenSource is { } tokens && Spec.Auth?.Env is { } envName)
         {
             string token = await tokens(ct, false).ConfigureAwait(false) ?? throw new NotSignedInException(Name);
@@ -115,9 +114,24 @@ public sealed class ExternalMcpBridge : McpBridge
 
         Log.Info($"bridge '{Name}' started pid={process.Id} ({_command})");
 
-        JsonNode? initResult = await SendRequestAsync("initialize", InitializeParams(), ct, TimeSpan.FromSeconds(30)).ConfigureAwait(false);
-        ReadInitializeResult(initResult);
-        await SendNotificationAsync("notifications/initialized", null, ct).ConfigureAwait(false);
+        try
+        {
+            JsonNode? initResult = await SendRequestAsync("initialize", InitializeParams(), ct, TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+            ReadInitializeResult(initResult);
+            await SendNotificationAsync("notifications/initialized", null, ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            // A child that never finished the handshake must not stay as "started": the next call spawns again.
+            process.Exited -= OnExited;
+            try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { Log.Debug($"bridge '{Name}' kill: {ex.Message}"); }
+            var stdin = _stdin;
+            _stdin = null;
+            _process = null;
+            if (stdin is not null) { try { await stdin.DisposeAsync().ConfigureAwait(false); } catch (Exception ex) when (ex is IOException or ObjectDisposedException) { Log.Debug($"bridge '{Name}' stdin: {ex.Message}"); } }
+            process.Dispose();
+            throw;
+        }
     }
 
     // ------------------------------------------------------------------ outbound
@@ -161,7 +175,7 @@ public sealed class ExternalMcpBridge : McpBridge
                     parameters.WriteTo(w);
                 }
                 w.WriteEndObject();
-            }, ct).ConfigureAwait(false);
+            }, timeoutCts.Token).ConfigureAwait(false); // a child that stopped reading must not hold the write (and the writer lock) forever
 
             return await tcs.Task.ConfigureAwait(false);
         }
@@ -338,6 +352,12 @@ public sealed class ExternalMcpBridge : McpBridge
         var process = _process;
         if (process is not null)
         {
+            // A child with requests still pending may have stopped reading: closing stdin would flush into a full pipe and hang.
+            if (!_pending.IsEmpty)
+            {
+                try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
+                catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { Log.Debug($"bridge '{Name}' kill: {ex.Message}"); }
+            }
             // Polite EOF first so well-behaved servers exit on their own.
             if (_stdin is not null) await _stdin.DisposeAsync().ConfigureAwait(false);
 

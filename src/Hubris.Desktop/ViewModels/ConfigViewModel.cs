@@ -74,7 +74,7 @@ public sealed class ConfigViewModel : ObservableObject
             foreach (var b in HubrisConfigFile.Load().Bridges)
             {
                 var row = NewBridge();
-                row.Name = b.Name; row.Source = b.Source ?? "";
+                row.Name = b.Name; row.OriginalName = b.Name; row.Source = b.Source ?? "";
                 if (b.IsRemote)
                 {
                     // Remote server: the command box carries the URL, the argument box the transport; headers stay in config.json.
@@ -96,11 +96,13 @@ public sealed class ConfigViewModel : ObservableObject
     private void SaveBridges()
     {
         var cfg = new HubrisConfig();
-        var existing = SafeLoad();
+        if (SafeLoad() is not { } existing) return;
         foreach (var row in Bridges)
         {
             if (string.IsNullOrWhiteSpace(row.Name) || string.IsNullOrWhiteSpace(row.Command)) continue;
-            var prev = existing.Bridges.Find(b => b.Name == row.Name.Trim());
+            // Fields the row does not show (env, headers, auth, source) follow the entry the row was loaded from, even after a rename.
+            string lookup = row.OriginalName.Length > 0 ? row.OriginalName : row.Name.Trim();
+            var prev = existing.Bridges.Find(b => b.Name == lookup);
             string? source = prev?.Source ?? (string.IsNullOrEmpty(row.Source) ? null : row.Source);
             if (row.IsRemote)
             {
@@ -115,7 +117,7 @@ public sealed class ConfigViewModel : ObservableObject
             cfg.Bridges.Add(new BridgeConfig
             {
                 Name = row.Name.Trim(), Command = row.Command.Trim(), Args = SplitArgs(row.Args),
-                Env = prev?.Env, Source = source,
+                Env = prev?.Env, Auth = prev?.Auth, Source = source,
             });
         }
         HubrisConfigFile.Save(cfg);
@@ -170,23 +172,31 @@ public sealed class ConfigViewModel : ObservableObject
         }
     }
 
-    private void AddFromCatalog(CatalogServer s)
+    private bool AddFromCatalog(CatalogServer s)
     {
-        var cfg = SafeLoad();
+        if (SafeLoad() is not { } cfg) return false;
         string name = s.Slug;
         for (int n = 2; cfg.Bridges.Exists(b => b.Name == name); n++) name = $"{s.Slug}-{n}";
         cfg.Bridges.Add(s.ToBridge(name));
         try { HubrisConfigFile.Save(cfg); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { LastResult = $"✗ {ex.Message}"; AppendLog(LastResult); return; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { LastResult = $"✗ {ex.Message}"; AppendLog(LastResult); return false; }
         LoadBridges();
         LastResult = $"✓ {s.Name} saved as bridge '{name}'. {(s.Auth == "oauth" ? "Press Connect on the hub dashboard to sign in." : "Running hubs pick it up on reload.")}";
         AppendLog(LastResult);
         _ = NotifyHubsAsync();
+        return true;
     }
 
-    private static HubrisConfig SafeLoad()
+    /// <summary>Null when config.json cannot be read: nothing may be written over a file we could not parse.</summary>
+    private HubrisConfig? SafeLoad()
     {
-        try { return HubrisConfigFile.Load(); } catch (Exception) { return new HubrisConfig(); }
+        try { return HubrisConfigFile.Load(); }
+        catch (Exception ex)
+        {
+            LastResult = $"✗ config.json unreadable ({ex.Message}); fix it before saving";
+            AppendLog(LastResult);
+            return null;
+        }
     }
 
     private void ScanClients()
@@ -222,7 +232,7 @@ public sealed class ConfigViewModel : ObservableObject
         }
         try
         {
-            var cfg = SafeLoad();
+            if (SafeLoad() is not { } cfg) return;
             var result = ClientConfigHijacker.Import(client, cfg);
             HubrisConfigFile.Save(cfg);
             bool empty = GlobalIsGateway(client);
@@ -430,9 +440,15 @@ public sealed class ConfigViewModel : ObservableObject
         var cur = new StringBuilder();
         char quote = '\0';
         bool any = false;
-        foreach (char c in text)
+        for (int i = 0; i < text.Length; i++)
         {
-            if (quote != '\0') { if (c == quote) quote = '\0'; else cur.Append(c); continue; }
+            char c = text[i];
+            if (quote != '\0')
+            {
+                if (c == '\\' && i + 1 < text.Length && text[i + 1] == quote) { cur.Append(quote); i++; continue; } // what Quote() wrote
+                if (c == quote) quote = '\0'; else cur.Append(c);
+                continue;
+            }
             if (c is '"' or '\'') { quote = c; any = true; continue; }
             if (char.IsWhiteSpace(c)) { if (any || cur.Length > 0) { result.Add(cur.ToString()); cur.Clear(); any = false; } continue; }
             cur.Append(c);
@@ -451,6 +467,8 @@ public sealed class BridgeRow : ObservableObject
     private int _envCount;
 
     public string Name { get => _name; set => Set(ref _name, value); }
+    /// <summary>Name the row was loaded under; a renamed row still finds its env/headers/auth in the file.</summary>
+    public string OriginalName { get; set; } = "";
     public string Command { get => _command; set { if (Set(ref _command, value)) { Raise(nameof(IsRemote)); Raise(nameof(EnvText)); Raise(nameof(ArgsPlaceholder)); } } }
     public string Args { get => _args; set => Set(ref _args, value); }
     /// <summary>A URL in the command box makes this a remote (HTTP) bridge; the argument box then holds the transport.</summary>
@@ -472,11 +490,11 @@ public sealed class CatalogRow : ObservableObject
 {
     private bool _added;
 
-    public CatalogRow(CatalogServer server, Action<CatalogServer> add, bool added)
+    public CatalogRow(CatalogServer server, Func<CatalogServer, bool> add, bool added)
     {
         Server = server;
         _added = added;
-        AddCommand = new RelayCommand(() => { add(server); Added = true; });
+        AddCommand = new RelayCommand(() => { if (add(server)) Added = true; });
     }
 
     public CatalogServer Server { get; }

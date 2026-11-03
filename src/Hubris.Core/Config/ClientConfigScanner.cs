@@ -216,7 +216,7 @@ public static class ClientConfigScanner
     /// <summary>Loop guard: never import an entry that would make Hubris spawn itself.</summary>
     public static bool IsHubrisEntry(string key, JsonObject entry)
     {
-        if (key.Contains("hubris", StringComparison.OrdinalIgnoreCase)) return true;
+        if (string.Equals(key, ClientConfigHijacker.ServerKey, StringComparison.OrdinalIgnoreCase)) return true; // what --install-* and Hijack write; "hubris-notes" is somebody's server
         string? command = Str(entry["command"]);
         if (command is not null)
         {

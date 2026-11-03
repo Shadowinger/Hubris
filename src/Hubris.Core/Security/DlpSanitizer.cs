@@ -9,7 +9,8 @@ public static partial class DlpSanitizer
     private const RegexOptions Opts = RegexOptions.CultureInvariant;
 
     // key=value / key: value style secrets (connection strings, env dumps, YAML, INI)
-    [GeneratedRegex(@"(?i)\b(password|passwd|pwd|secret|client[_-]?secret|token|access[_-]?token|refresh[_-]?token|api[_-]?key|apikey|accesskey|secret[_-]?key|private[_-]?key)(\s*[=:]\s*[""']?)(?!\*\*\*)([^;,\s""'&]+)", Opts)]
+    // key=value / key: value / "key": "value" / PREFIX_KEY=value; a purely numeric value ("Token: 1814") is a count, not a secret
+    [GeneratedRegex(@"(?i)(?<![A-Za-z0-9])(password|passwd|pwd|secret|client[_-]?secret|token|access[_-]?token|refresh[_-]?token|api[_-]?key|apikey|secret[_-]?access[_-]?key|access[_-]?key|accesskey|secret[_-]?key|private[_-]?key)([""']?\s*[=:]\s*[""']?)(?!\*\*\*)(?=[^;,\s""'&]*[^0-9;,\s""'&])([^;,\s""'&]+)", Opts)]
     private static partial Regex KeyValueSecret();
 
     // OpenAI / Anthropic style keys
@@ -32,9 +33,17 @@ public static partial class DlpSanitizer
     [GeneratedRegex(@"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----", Opts)]
     private static partial Regex PemPrivateKey();
 
-    // Czech / Slovak rodné číslo: YYMMDD/XXX(X), month 01-12 or 51-62 for women (+20/+70 variants)
-    [GeneratedRegex(@"\b\d{2}(0[1-9]|1[0-2]|2[1-9]|3[0-2]|5[1-9]|6[0-2]|7[1-9]|8[0-2])(0[1-9]|[12]\d|3[01])\s?/?\s?\d{3,4}\b", Opts)]
+    // Czech / Slovak rodné číslo written the usual way, YYMMDD/XXX(X); the slash is required so that plain
+    // 10-digit ids and timestamps (1.3 % of which pass the mod-11 test) are left alone
+    [GeneratedRegex(@"\b\d{2}(0[1-9]|1[0-2]|2[1-9]|3[0-2]|5[1-9]|6[0-2]|7[1-9]|8[0-2])(0[1-9]|[12]\d|3[01])\s?/\s?\d{3,4}\b", Opts)]
     private static partial Regex RodneCislo();
+
+    // IBAN (validated with mod 97) and payment card numbers (validated with Luhn)
+    [GeneratedRegex(@"\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){2,7}(?:\s?[A-Z0-9]{1,3})?\b", Opts)]
+    private static partial Regex Iban();
+
+    [GeneratedRegex(@"\b(?:\d[ -]?){12,18}\d\b", Opts)]
+    private static partial Regex CardNumber();
 
     // Slack tokens
     [GeneratedRegex(@"\bxox[abprs]-[A-Za-z0-9-]{10,}\b", Opts)]
@@ -60,23 +69,58 @@ public static partial class DlpSanitizer
         s = Replace(Jwt(), s, static _ => "eyJ" + Mask + "." + Mask + "." + Mask);
         s = Replace(SlackToken(), s, static _ => "xox*-" + Mask);
         s = Replace(RodneCislo(), s, static m => IsRodneCislo(m.Value) ? "******/" + Mask : m.Value);
+        s = Replace(Iban(), s, static m => IsIban(m.Value) ? m.Value[..4] + " " + Mask : m.Value);
+        s = Replace(CardNumber(), s, static m => IsCardNumber(m.Value) ? "**** **** **** " + Digits(m.Value)[^4..] : m.Value);
 
         return s;
     }
 
-    /// <summary>10-digit numbers must pass the mod-11 rule; 9-digit (pre-1954) ones only count when written with a slash.</summary>
+    /// <summary>10-digit numbers must pass the mod-11 rule; 9-digit (pre-1954) ones have no check digit.</summary>
     public static bool IsRodneCislo(string text)
     {
-        Span<char> digits = stackalloc char[10];
-        int n = 0;
-        foreach (char c in text)
+        string digits = Digits(text);
+        if (digits.Length == 10) return long.Parse(digits, System.Globalization.CultureInfo.InvariantCulture) % 11 == 0;
+        return digits.Length == 9;
+    }
+
+    /// <summary>ISO 13616: move the first four characters to the end, letters become 10..35, the number mod 97 is 1.</summary>
+    public static bool IsIban(string text)
+    {
+        string compact = text.Replace(" ", "");
+        if (compact.Length < 15 || compact.Length > 34) return false;
+        string rearranged = compact[4..] + compact[..4];
+        int rem = 0;
+        foreach (char c in rearranged)
         {
-            if (!char.IsAsciiDigit(c)) continue;
-            if (n == 10) return false;
-            digits[n++] = c;
+            int v = char.IsAsciiDigit(c) ? c - '0' : char.IsAsciiLetterUpper(c) ? c - 'A' + 10 : -1;
+            if (v < 0) return false;
+            rem = v < 10 ? (rem * 10 + v) % 97 : (rem * 100 + v) % 97;
         }
-        if (n == 10) return long.Parse(digits, System.Globalization.CultureInfo.InvariantCulture) % 11 == 0;
-        return n == 9 && text.Contains('/');
+        return rem == 1;
+    }
+
+    /// <summary>Luhn check over 13..19 digits.</summary>
+    public static bool IsCardNumber(string text)
+    {
+        string digits = Digits(text);
+        if (digits.Length < 13 || digits.Length > 19) return false;
+        int sum = 0;
+        bool dbl = false;
+        for (int i = digits.Length - 1; i >= 0; i--)
+        {
+            int d = digits[i] - '0';
+            if (dbl) { d *= 2; if (d > 9) d -= 9; }
+            sum += d;
+            dbl = !dbl;
+        }
+        return sum % 10 == 0;
+    }
+
+    private static string Digits(string text)
+    {
+        var sb = new System.Text.StringBuilder(text.Length);
+        foreach (char c in text) if (char.IsAsciiDigit(c)) sb.Append(c);
+        return sb.ToString();
     }
 
     private static string Replace(Regex regex, string input, MatchEvaluator evaluator)

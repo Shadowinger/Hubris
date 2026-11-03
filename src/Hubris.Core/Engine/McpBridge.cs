@@ -88,11 +88,16 @@ public abstract class McpBridge : IAsyncDisposable
 
     public async Task<CallToolResult> CallToolAsync(string remoteName, JsonObject? arguments, CancellationToken ct)
     {
+        bool wasStarted = IsStarted;
         try { await EnsureStartedAsync(ct).ConfigureAwait(false); }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex) when (ex is McpBridgeException or System.ComponentModel.Win32Exception or TimeoutException
                                    or InvalidOperationException or HttpRequestException or IOException or UriFormatException)
         { return CallToolResult.Error($"Bridge '{Name}' could not start: {ex.Message}"); }
+
+        // First real start of a bridge that was registered from the cache: let the router re-list in the background,
+        // so a server whose tools changed since the cache entry is corrected on first use, not after the TTL.
+        if (!wasStarted) RaiseToolsChanged();
 
         var p = new JsonObject { ["name"] = remoteName };
         if (arguments is not null) p["arguments"] = arguments.DeepClone();

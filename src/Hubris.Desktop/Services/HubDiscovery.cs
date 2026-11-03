@@ -23,6 +23,8 @@ public sealed class HubDiscovery : IAsyncDisposable
         _loop ??= Task.Run(() => LoopAsync(_lifetime.Token), CancellationToken.None);
     }
 
+    private readonly SemaphoreSlim _scanLock = new(1, 1);
+
     public Task RescanAsync() => ScanAsync(_lifetime.Token);
 
     private async Task LoopAsync(CancellationToken ct)
@@ -38,6 +40,13 @@ public sealed class HubDiscovery : IAsyncDisposable
     }
 
     private async Task ScanAsync(CancellationToken ct)
+    {
+        if (!await _scanLock.WaitAsync(0, ct).ConfigureAwait(false)) return; // Rescan during the loop's scan would connect a hub twice
+        try { await ScanCoreAsync(ct).ConfigureAwait(false); }
+        finally { _scanLock.Release(); }
+    }
+
+    private async Task ScanCoreAsync(CancellationToken ct)
     {
         string dir = RuntimeDir;
         if (!Directory.Exists(dir)) return;
@@ -86,6 +95,7 @@ public sealed class HubDiscovery : IAsyncDisposable
             lock (_gate) { _clients[d.Pid] = client; }
             client.Disconnected += OnClientDisconnected;
             HubConnected?.Invoke(client);
+            client.Start();
         }
     }
 

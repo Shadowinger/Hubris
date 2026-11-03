@@ -67,6 +67,22 @@ public sealed class ToolRegistry
         _tokens[tool.Name] = EstimateTokens(tool); // definitions never change after registration
     }
 
+    /// <summary>The remote definitions currently registered for one bridge (names without the prefix), ordered by name.</summary>
+    public List<ToolDefinition> DefinitionsOf(string bridgeName)
+    {
+        var list = new List<ToolDefinition>();
+        string prefix = bridgeName + "__";
+        foreach (var t in _tools.Values)
+            if (t is BridgedTool bt && bt.BridgeName == bridgeName)
+            {
+                var d = ToDefinition(t);
+                d.Name = t.Name[prefix.Length..];
+                list.Add(d);
+            }
+        list.Sort((a, b) => string.CompareOrdinal(a.Name, b.Name));
+        return list;
+    }
+
     public int UnregisterWhere(Func<IMcpTool, bool> predicate)
     {
         int removed = 0;
@@ -88,6 +104,7 @@ public sealed class ToolRegistry
     public bool Unlock(string name) => _tools.ContainsKey(name) && _unlocked.TryAdd(name, 0);
 
     public bool IsUnlocked(string name) => _unlocked.ContainsKey(name);
+    public int UnlockedCount => _unlocked.Count;
 
     /// <summary>Hides an unlocked on-demand tool again (compact mode). Returns true if it was unlocked.</summary>
     public bool Lock(string name) => _unlocked.TryRemove(name, out _);

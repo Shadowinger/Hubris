@@ -21,12 +21,12 @@ public sealed class OAuthTokenProvider
     private readonly HttpClient _http;
     private readonly Action<string> _openBrowser;
     private readonly Func<DateTimeOffset> _clock;
-    private readonly SemaphoreSlim _lock = new(1, 1);
-    private int _loginRunning;
+    private readonly ProviderGate _gate;
 
     public OAuthTokenProvider(string bridge, OAuthSpec spec, string? resourceUrl, ISecureTokenStore store, HttpClient http,
-                              Action<string>? openBrowser = null, Func<DateTimeOffset>? clock = null)
+                              Action<string>? openBrowser = null, Func<DateTimeOffset>? clock = null, ProviderGate? gate = null)
     {
+        _gate = gate ?? new ProviderGate();
         Bridge = bridge;
         _spec = spec;
         _resourceUrl = resourceUrl;
@@ -61,13 +61,20 @@ public sealed class OAuthTokenProvider
     /// <summary>A usable access token, or null when the user has to sign in (again).</summary>
     public async Task<string?> GetAccessTokenAsync(CancellationToken ct, bool forceRefresh = false)
     {
-        await _lock.WaitAsync(ct).ConfigureAwait(false);
+        await _gate.Lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             var tok = _store.Get(Provider);
             if (tok is null) { SetState("none"); return null; }
             bool fresh = Fresh(tok);
             if (fresh && !forceRefresh) { SetState("connected"); return tok.AccessToken; }
+            // Another hub may have refreshed this provider already: read past the memory copy before spending the refresh token.
+            if (_store.Reload(Provider) is { } latest)
+            {
+                tok = latest;
+                fresh = Fresh(tok);
+                if (fresh && !forceRefresh) { SetState("connected"); return tok.AccessToken; }
+            }
             if (tok.RefreshToken is null)
             {
                 SetState(fresh ? "connected" : "expired");
@@ -95,14 +102,14 @@ public sealed class OAuthTokenProvider
         }
         finally
         {
-            _lock.Release();
+            _gate.Lock.Release();
         }
     }
 
     /// <summary>Discovery → (registration →) browser → loopback redirect → code exchange → store.</summary>
     public async Task LoginAsync(CancellationToken ct)
     {
-        if (Interlocked.CompareExchange(ref _loginRunning, 1, 0) == 1) throw new OAuthException($"bridge '{Bridge}': a login is already in progress");
+        if (Interlocked.CompareExchange(ref _gate.LoginRunning, 1, 0) == 1) throw new OAuthException($"bridge '{Bridge}': a login is already in progress");
         SetState("pending");
         try
         {
@@ -151,16 +158,17 @@ public sealed class OAuthTokenProvider
             SetState("connected");
             Log.Info($"oauth '{Bridge}': signed in" + (tr.ExpiresIn is > 0 ? $", token valid {tr.ExpiresIn}s" : string.Empty));
         }
-        catch (Exception ex) when (ex is OAuthException or HttpRequestException or OperationCanceledException or IOException or SocketException or UriFormatException)
+        catch (Exception ex) when (ex is OAuthException or HttpRequestException or OperationCanceledException or IOException or SocketException or UriFormatException or System.Text.Json.JsonException or System.ComponentModel.Win32Exception)
         {
-            LastError = ex is OperationCanceledException ? "no redirect within 5 minutes" : ex.Message;
+            LastError = ex is OperationCanceledException && !ct.IsCancellationRequested ? "no redirect or server answer in time" : ex.Message;
             SetState("error");
             Log.Warn($"oauth '{Bridge}': login failed: {LastError}");
             throw new OAuthException(LastError);
         }
         finally
         {
-            Volatile.Write(ref _loginRunning, 0);
+            Volatile.Write(ref _gate.LoginRunning, 0);
+            if (State == "pending") { LastError ??= "login failed unexpectedly"; SetState("error"); } // an exception outside the filter must not leave a stuck "pending"
         }
     }
 
@@ -178,6 +186,13 @@ public sealed class OAuthTokenProvider
         State = state;
         Changed?.Invoke();
     }
+}
+
+/// <summary>Shared by every bridge that names the same provider: one refresh at a time, one login at a time.</summary>
+public sealed class ProviderGate
+{
+    public SemaphoreSlim Lock { get; } = new(1, 1);
+    public int LoginRunning;
 }
 
 /// <summary>Attaches the bearer token; on 401 refreshes once and repeats the request.</summary>
@@ -213,11 +228,16 @@ public sealed class OAuthDelegatingHandler : DelegatingHandler
 public sealed class OAuthManager
 {
     private readonly ISecureTokenStore _store;
-    private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(30) };
+    private readonly HttpClient _http;
     private readonly Dictionary<string, OAuthTokenProvider> _providers = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, ProviderGate> _gates = new(StringComparer.Ordinal);
     private readonly object _gate = new();
 
-    public OAuthManager(ISecureTokenStore store) => _store = store;
+    public OAuthManager(ISecureTokenStore store, HttpClient? http = null)
+    {
+        _store = store;
+        _http = http ?? new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+    }
 
     public event Action? Changed;
     public int Count { get { lock (_gate) return _providers.Count; } }
@@ -228,7 +248,9 @@ public sealed class OAuthManager
         lock (_gate)
         {
             if (_providers.TryGetValue(spec.Name, out var p)) return p;
-            p = new OAuthTokenProvider(spec.Name, auth, spec.Url, _store, _http);
+            string providerName = auth.Provider ?? spec.Name;
+            if (!_gates.TryGetValue(providerName, out var gate)) _gates[providerName] = gate = new ProviderGate();
+            p = new OAuthTokenProvider(spec.Name, auth, spec.Url, _store, _http, gate: gate);
             p.Changed += () => Changed?.Invoke();
             _providers[spec.Name] = p;
             return p;

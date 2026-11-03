@@ -16,7 +16,6 @@ public sealed class HubViewModel : ObservableObject
 
     private string _mode = "Safe";
     private bool _isBypass;
-    private bool _isConnected = true;
     private string _clientName = "";
     private string _uptime = "–";
     private string _rss = "–";
@@ -61,22 +60,13 @@ public sealed class HubViewModel : ObservableObject
     public string OutdatedHint => $"Hub runs Hubris {Version}, this app is {HubRuntime.Version}: restart the MCP client to pick up the new binary.";
     public string Subtitle => $"pid {Pid} · {Fmt.Trim(Cwd, 48)}";
     public string ClientName { get => _clientName; private set { if (Set(ref _clientName, value)) { Raise(nameof(Title)); } } }
-    public bool IsConnected { get => _isConnected; private set => Set(ref _isConnected, value); }
 
     // ---------------------------------------------------------------- mode
     public string Mode { get => _mode; private set { if (Set(ref _mode, value)) Raise(nameof(IsSafe)); } }
     public bool IsSafe => _mode == "Safe";
 
     /// <summary>Two-way bound to the toggle; the setter sends the command, the event confirms it.</summary>
-    public bool IsBypass
-    {
-        get => _isBypass;
-        set
-        {
-            if (!Set(ref _isBypass, value)) return;
-            _ = _client.SetModeAsync(value ? "bypass" : "safe");
-        }
-    }
+    public bool IsBypass => _isBypass; // the Safe/Bypass buttons send the command; the hub's mode_changed sets this
 
     // ---------------------------------------------------------------- status
     public string Uptime { get => _uptime; private set => Set(ref _uptime, value); }
@@ -195,7 +185,6 @@ public sealed class HubViewModel : ObservableObject
 
     public void MarkDisconnected()
     {
-        IsConnected = false;
         _tick.Stop();
         foreach (var a in Approvals) a.Expire();
         Approvals.Clear();

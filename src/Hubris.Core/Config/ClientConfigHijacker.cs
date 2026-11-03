@@ -148,8 +148,8 @@ public static class ClientConfigHijacker
 
     public static string? LatestBackup(string path)
     {
-        string dir = Path.GetDirectoryName(path)!;
-        string prefix = Path.GetFileName(path) + ".hubris.bak-";
+        string dir = HubrisPaths.BackupsDir;
+        string prefix = Path.GetFileName(Path.ChangeExtension(SnapshotPathFor(path), null)) + ".bak-";
         if (!Directory.Exists(dir)) return null;
         string? best = null;
         foreach (var f in Directory.EnumerateFiles(dir, prefix + "*"))
@@ -191,10 +191,14 @@ public static class ClientConfigHijacker
         }
     }
 
+    /// <summary>Whole-file copy under ~/.hubris/backups (never next to a project file, where git would pick it up), 0600 like the snapshot.</summary>
     public static string Backup(string path)
     {
-        string backup = path + ".hubris.bak-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
+        Directory.CreateDirectory(HubrisPaths.BackupsDir);
+        string stamp = DateTime.UtcNow.ToString("yyyyMMddHHmmssfff", System.Globalization.CultureInfo.InvariantCulture);
+        string backup = System.IO.Path.ChangeExtension(SnapshotPathFor(path), null) + ".bak-" + stamp + ".json";
         File.Copy(path, backup, overwrite: true);
+        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(backup, UnixFileMode.UserRead | UnixFileMode.UserWrite);
         return backup;
     }
 
@@ -209,16 +213,49 @@ public static class ClientConfigHijacker
         return Path.Combine(HubrisPaths.BackupsDir, safe + ".snapshot.json");
     }
 
+    /// <summary>
+    /// The first hijack holds the true original. A later hijack only adds what the user put into the client config
+    /// since (new root entries, new project blocks), so Restore returns everything that ever bypassed the gateway.
+    /// </summary>
     private static void SaveSnapshot(DetectedClient client, McpSnapshot snapshot)
     {
         string path = SnapshotPath(client);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        if (File.Exists(path)) return; // the first hijack holds the true original; later ones would snapshot "{hubris}"
-        File.WriteAllBytes(path, JsonSerializer.SerializeToUtf8Bytes(snapshot, ConfigJsonContext.Default.McpSnapshot));
+        if (File.Exists(path))
+        {
+            McpSnapshot? existing = null;
+            try { existing = JsonSerializer.Deserialize(File.ReadAllBytes(path), ConfigJsonContext.Default.McpSnapshot); }
+            catch (JsonException ex) { Log.Warn($"snapshot {path} unreadable, replacing: {ex.Message}"); }
+            if (existing is not null)
+            {
+                if (snapshot.Root is { } newRoot)
+                {
+                    existing.Root ??= new JsonObject();
+                    foreach (var kv in newRoot)
+                        if (!existing.Root.ContainsKey(kv.Key) && !IsHubrisEntryNode(kv.Key, kv.Value)) existing.Root[kv.Key] = kv.Value?.DeepClone();
+                }
+                foreach (var kv in snapshot.Projects)
+                {
+                    if (!existing.Projects.TryGetValue(kv.Key, out var block)) { existing.Projects[kv.Key] = kv.Value; continue; }
+                    foreach (var entry in kv.Value)
+                        if (!block.ContainsKey(entry.Key)) block[entry.Key] = entry.Value?.DeepClone();
+                }
+                snapshot = existing;
+            }
+        }
+        string tmp = path + ".tmp";
+        File.WriteAllBytes(tmp, JsonSerializer.SerializeToUtf8Bytes(snapshot, ConfigJsonContext.Default.McpSnapshot));
+        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(tmp, UnixFileMode.UserRead | UnixFileMode.UserWrite); // carries the imported env blocks
+        File.Move(tmp, path, overwrite: true);
     }
+
+    private static bool IsHubrisEntryNode(string key, JsonNode? node) => node is JsonObject o && ClientConfigScanner.IsHubrisEntry(key, o);
 
     private static void WriteAtomic(string path, JsonObject root)
     {
+        // Dotfiles setups symlink these files; replacing the link with a plain file would be undone by the next sync.
+        try { path = File.ResolveLinkTarget(path, returnFinalTarget: true)?.FullName ?? path; }
+        catch (IOException ex) { Log.Debug($"link target of {path}: {ex.Message}"); }
         string tmp = path + ".tmp-" + Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture);
         using (var fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None))
         using (var w = new Utf8JsonWriter(fs, new JsonWriterOptions { Indented = true }))

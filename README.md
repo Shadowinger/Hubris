@@ -59,18 +59,22 @@ client ──stdio──▶ Hubris ──stdio──▶ bridge 1 (npx …)
   before use, a 401 triggers one refresh and retry, and concurrent calls share one refresh. For a stdio bridge
   the token goes into the child's environment under `auth.env` right before the lazy spawn. The desktop app's
   Connections card shows the state per bridge with Connect / Disconnect; the same goes over the control socket
-  as `oauth_start`, `oauth_status`, `oauth_revoke` and the `oauth_changed` event.
+  as `oauth_start`, `oauth_revoke` and the `oauth_changed` event.
 - **Safe mode.** Tools are classified read-only / mutating / destructive from their annotations and names.
-  Read-only calls pass, mutating calls have their arguments scanned for things like `rm -rf`, `DROP TABLE`,
-  `git push --force`, destructive calls are blocked. A blocked call waits for Approve / Deny in the desktop app
+  Read-only calls pass, mutating calls have their argument values scanned (every string in the call, joined the way
+  a shell would see them, so `{"command":"rm","args":["-rf","/"]}`, a tab or a quoted binary read the same as
+  `rm -rf /`) for things like `rm -rf`, `DROP TABLE`, `DELETE`/`UPDATE` without `WHERE`, `git push --force`;
+  destructive calls are blocked. Every pattern has a match timeout, and a timeout counts as a hit. A blocked call waits for Approve / Deny in the desktop app
   (`--approval-timeout`, default 120 s) and fails with `[SAFE MODE BLOCKED]` if nobody answers. "Remember for
   this session" covers a tool's declared risk, never an argument-pattern hit. `--mode=bypass` turns all of it off.
-- **DLP.** Tool output is scanned for API keys, bearer tokens, card numbers, IBANs and Czech birth numbers
-  and the values are masked before they reach the model.
+- **DLP.** Tool output is scanned for API keys and `key=value` / `"key": "value"` secrets (password, token,
+  secret, api key and the like, also as `DATABASE_PASSWORD=`), bearer tokens and JWTs, private keys, Slack
+  tokens, card numbers (Luhn-checked), IBANs (mod-97-checked) and Czech birth numbers written with a slash;
+  the values are masked before they reach the model.
 - **Takeover.** The desktop app scans the MCP configs of Claude Desktop, Claude Code (including per-project
   entries in `~/.claude.json`), Cursor, Windsurf, VS Code and project-level `.mcp.json` / `.cursor/mcp.json` /
   `.vscode/mcp.json`, imports the servers (commands and `url` entries, with their headers) into
-  `~/.hubris/config.json` and rewrites the client config so that it points at Hubris only. A snapshot goes to `~/.hubris/backups/` and Restore puts things back exactly as they were.
+  `~/.hubris/config.json` and rewrites the client config so that it points at Hubris only. A snapshot and a whole-file backup go to `~/.hubris/backups/` (0600, never next to a project file), a second takeover adds to the snapshot what the user added in between, Restore puts it all back, and symlinked configs are written through the link.
 
 ## Install
 
@@ -137,7 +141,12 @@ Built-in tools: `hub_status`, `git_smart_status`, `fs_read_head`, `mcp_search_to
 
 The control socket is `~/.hubris/run/<pid>.sock`; the desktop app finds running hubs through it, and the
 following commands are available over it: `get_status`, `list_tools`, `set_mode`, `approve`, `deny`, `forget`,
-`list_decisions`, `reveal`, `lock`, `clear_cache`, `reload_config`, `cache_maintain`, `shutdown`.
+`list_decisions`, `reveal`, `lock`, `clear_cache`, `reload_config`, `cache_maintain`, `shutdown`, `oauth_start`,
+`oauth_revoke`. The socket is 0600, and the commands that change what the hub does (mode, approvals, locks,
+cache, config, OAuth, shutdown) are accepted only from a peer process whose executable is `Hubris.Desktop`,
+as the kernel reports it; the bridges and shell tools the hub itself runs are the same user, so a plain
+`nc -U` from a tool call is refused. `--control-trust-all` lifts that for tests and scripts. A same-user
+attacker who can inject code into the desktop app still wins; that is the limit of a local gateway.
 `HUBRIS_HOME` moves the whole state directory.
 
 ## Desktop app

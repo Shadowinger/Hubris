@@ -34,6 +34,8 @@ public sealed class CliOptions
     public bool ShowHelp { get; private set; }
     public bool ShowVersion { get; private set; }
     public bool NoControl { get; private set; }
+    /// <summary>Accept privileged control commands from any local process, not only the desktop app (tests, scripts).</summary>
+    public bool ControlTrustAll { get; private set; }
     public bool NoCache { get; private set; }
     public double CacheTtlHours { get; private set; } = 24;
     public double ApprovalTimeoutSec { get; private set; } = 120;
@@ -47,6 +49,7 @@ public sealed class CliOptions
         if (Compact) list.Add("--compact");
         if (Verbose) list.Add("--verbose");
         if (NoControl) list.Add("--no-control");
+        if (ControlTrustAll) list.Add("--control-trust-all");
         if (NoCache) list.Add("--no-cache");
         if (CacheTtlHours != 24) list.Add($"--cache-ttl={CacheTtlHours.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
         if (ApprovalTimeoutSec != 120) list.Add($"--approval-timeout={ApprovalTimeoutSec.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
@@ -82,6 +85,7 @@ public sealed class CliOptions
                 case "--install-vscode": options.InstallVsCode = true; continue;
                 case "--install-claude": options.InstallClaude = true; continue;
                 case "--no-control": options.NoControl = true; continue;
+                case "--control-trust-all": options.ControlTrustAll = true; continue;
                 case "--no-cache": options.NoCache = true; continue;
                 case "--help" or "-h": options.ShowHelp = true; continue;
                 case "--version": options.ShowVersion = true; continue;
@@ -168,7 +172,7 @@ public sealed class CliOptions
     private static readonly string[] OwnOptions =
     [
         "--stdio", "--compact", "--verbose", "-v", "--install-vscode", "--install-claude", "--help", "-h",
-        "--version", "--no-control", "--no-cache", "--cache-ttl", "--mode", "--bridge", "--approval-timeout",
+        "--version", "--no-control", "--control-trust-all", "--no-cache", "--cache-ttl", "--mode", "--bridge", "--approval-timeout",
     ];
 
     public static bool IsOwnOption(string arg)
@@ -196,6 +200,7 @@ public sealed class CliOptions
             "  --bridge=n:URL     remote MCP server over Streamable HTTP (sse:URL for HTTP+SSE); 'Header: value' args follow\n" +
             "  --verbose          debug logging on stderr\n" +
             "  --no-control       do not open the local control socket (no desktop UI, no approvals)\n" +
+            "  --control-trust-all  accept mode/approval commands from any local process, not only the desktop app\n" +
             "  --no-cache         always spawn bridges at startup instead of using the SQLite tool cache\n" +
             "  --cache-ttl=H      hours a cached bridge tool list stays valid (default 24)\n" +
             "  --approval-timeout=S  seconds a blocked call waits for Approve/Deny in the UI (default 120)\n" +

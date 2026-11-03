@@ -18,6 +18,7 @@ public sealed class ControlClient : IAsyncDisposable
     internal ControlClient(Socket socket, int id)
     {
         _socket = socket;
+        (PeerPid, PeerPath) = PeerIdentity.Of(socket);
         _stream = new NetworkStream(socket, ownsSocket: true);
         _reader = PipeReader.Create(_stream, new StreamPipeReaderOptions(leaveOpen: true));
         _writer = new JsonLineWriter(PipeWriter.Create(_stream, new StreamPipeWriterOptions(leaveOpen: true)));
@@ -25,6 +26,9 @@ public sealed class ControlClient : IAsyncDisposable
     }
 
     public int Id { get; }
+    /// <summary>Peer process as the kernel reports it; 0 / null where the platform cannot say (Windows).</summary>
+    public int PeerPid { get; }
+    public string? PeerPath { get; }
     public bool IsClosed => Volatile.Read(ref _closed) == 1;
 
     /// <summary>Cancellation propagates so a broadcast can give up on a client that stopped reading.</summary>
@@ -59,9 +63,9 @@ public sealed class ControlClient : IAsyncDisposable
                     Log.Warn($"control client {Id}: bad frame: {ex.Message}");
                 }
                 if (msg is not null) await onMessage(this, msg).ConfigureAwait(false);
-            }, ct).ConfigureAwait(false);
+            }, ct, maxLine: 4 * 1024 * 1024).ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is IOException or SocketException or ObjectDisposedException)
+        catch (Exception ex) when (ex is IOException or SocketException or ObjectDisposedException or InvalidDataException)
         {
             Log.Debug($"control client {Id} dropped: {ex.Message}");
         }
@@ -146,7 +150,7 @@ public sealed class ControlServer : IAsyncDisposable
             var client = new ControlClient(accepted, Interlocked.Increment(ref _nextId));
             int count;
             lock (_gate) { _clients.Add(client); count = _clients.Count; }
-            Log.Info($"control client {client.Id} connected ({count} total)");
+            Log.Info($"control client {client.Id} connected ({count} total) pid={client.PeerPid} exe={client.PeerPath ?? "?"}");
             ClientCountChanged?.Invoke(count);
             _ = Task.Run(() => ServeAsync(client, ct), CancellationToken.None);
         }

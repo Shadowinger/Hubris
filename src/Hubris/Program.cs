@@ -40,6 +40,13 @@ if (opts.InstallVsCode || opts.InstallClaude)
 
 // ---------------------------------------------------------------- server mode
 
+if (Environment.GetEnvironmentVariable("HUBRIS_PARENT") is { Length: > 0 } parent)
+{
+    // A bridge entry points back at the gateway (a wrapper script around Hubris, say): every level would spawn the next.
+    Log.Error($"refusing to start: launched by another Hubris (pid {parent}); a bridge in config.json points at the gateway itself");
+    return 3;
+}
+
 using var shutdown = new CancellationTokenSource();
 void RequestShutdown(string why)
 {
@@ -101,8 +108,8 @@ foreach (var cli in opts.Bridges)
 
 var bridges = runtime.Bridges;
 var bridgeHost = new BridgeHost(runtime, registry);
-foreach (var spec in bridgeSpecs)
-    await bridgeHost.AddAsync(spec, shutdown.Token);
+// All at once: a client gives the hub ~30 s to answer initialize, and one cold npx bridge can eat that alone.
+await Task.WhenAll(bridgeSpecs.Select(spec => bridgeHost.AddAsync(spec, shutdown.Token)));
 toolCache?.MaintainIfDue(TimeSpan.FromDays(7)); // after the bridges: never on the startup path, never fatal
 
 ControlHub? control = null;
@@ -110,6 +117,7 @@ if (!opts.NoControl)
 {
     control = new ControlHub(runtime, registry, security, TimeSpan.FromSeconds(opts.ApprovalTimeoutSec));
     control.RequestShutdown = () => RequestShutdown("control channel");
+    control.TrustAllClients = opts.ControlTrustAll;
     try
     {
         control.Start();
@@ -149,7 +157,7 @@ if (stdinClosed && !shutdown.IsCancellationRequested)
 RequestShutdown(stdinClosed ? "stdin closed" : "signal");
 await router.ShutdownAsync();
 if (control is not null) await control.DisposeAsync();
-foreach (var b in bridges) await b.DisposeAsync();
+await Task.WhenAll(bridges.Select(b => b.DisposeAsync().AsTask()));
 toolCache?.Dispose();
 if (stdinClosed) await transport.DisposeAsync();
 else Log.Debug("stdin read still pending; exiting without draining it");

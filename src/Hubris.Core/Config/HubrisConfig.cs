@@ -113,8 +113,9 @@ public static class HubrisConfigFile
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         if (File.Exists(path)) File.Copy(path, path + ".bak", overwrite: true);
         string tmp = path + ".tmp";
-        File.WriteAllBytes(tmp, JsonSerializer.SerializeToUtf8Bytes(config, ConfigJsonContext.Default.HubrisConfig));
-        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(tmp, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        var options = new FileStreamOptions { Mode = FileMode.Create, Access = FileAccess.Write, Share = FileShare.None };
+        if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite; // 0600 from the first byte
+        using (var fs = new FileStream(tmp, options)) fs.Write(JsonSerializer.SerializeToUtf8Bytes(config, ConfigJsonContext.Default.HubrisConfig));
         File.Move(tmp, path, overwrite: true);
         Log.Info($"config written: {path} ({config.Bridges.Count} bridge(s))");
     }

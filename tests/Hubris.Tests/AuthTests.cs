@@ -15,6 +15,7 @@ internal sealed class FakeAuthWorld : HttpMessageHandler
     public int Registrations, Exchanges, Refreshes, ResourceCalls;
     public string ValidToken = "A1";
     public bool RejectEverything;
+    public bool BrokenRegistration;
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage req, CancellationToken ct)
     {
@@ -29,6 +30,7 @@ internal sealed class FakeAuthWorld : HttpMessageHandler
             var reg = JsonNode.Parse(await req.Content!.ReadAsStringAsync(ct))!.AsObject();
             Assert.Equal("none", reg["token_endpoint_auth_method"]!.GetValue<string>());
             RedirectUri = reg["redirect_uris"]![0]!.GetValue<string>();
+            if (BrokenRegistration) return new HttpResponseMessage(HttpStatusCode.Created) { Content = new StringContent("<html>oops</html>", Encoding.UTF8, "text/html") };
             return Json("""{"client_id":"cid-1"}""", HttpStatusCode.Created);
         }
         if (host == "as.test" && path == "/token")
@@ -90,6 +92,7 @@ internal sealed class CountingStore : ISecureTokenStore
     public int Gets, Sets;
     private readonly Dictionary<string, StoredToken> _d = new();
     public StoredToken? Get(string account) { Gets++; return _d.GetValueOrDefault(account); }
+    public StoredToken? Reload(string account) => Get(account);
     public void Set(string account, StoredToken token) { Sets++; _d[account] = token; }
     public void Delete(string account) => _d.Remove(account);
 }
@@ -154,6 +157,44 @@ public class AuthTests : IDisposable
         Assert.Equal(1, world.Refreshes); // five concurrent callers, one refresh
         Assert.Equal("R1", store.Get("notion")!.RefreshToken); // the server kept the refresh token
         Assert.True(store.Get("notion")!.ExpiresAt > now.ToUnixTimeSeconds() + 3000);
+    }
+
+    [Fact]
+    public async Task Broken_registration_reply_ends_in_error_not_pending()
+    {
+        var (provider, world, _) = Build();
+        world.BrokenRegistration = true;
+        await Assert.ThrowsAsync<OAuthException>(() => provider.LoginAsync(CancellationToken.None));
+        Assert.Equal("error", provider.State);
+        Assert.NotNull(provider.LastError);
+        world.BrokenRegistration = false;
+        await provider.LoginAsync(CancellationToken.None); // the gate is free again
+        Assert.Equal("connected", provider.State);
+    }
+
+    [Fact]
+    public async Task Bridges_sharing_a_provider_share_one_refresh()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var world = new FakeAuthWorld();
+        var store = new CachingTokenStore(new FileTokenStore(Path.Combine(_dir, "shared")));
+        store.Set("notion", new StoredToken { AccessToken = "A1", RefreshToken = "R1", ExpiresAt = now.ToUnixTimeSeconds() + 30, TokenEndpoint = "https://as.test/token", ClientId = "cid-1", Resource = "https://mcp.test/mcp" });
+        var manager = new OAuthManager(store, new HttpClient(world));
+        var a = manager.GetOrCreate(new BridgeSpec("notion-a", "", [], null, "https://mcp.test/mcp", null, "http", new OAuthSpec(Provider: "notion")));
+        var b = manager.GetOrCreate(new BridgeSpec("notion-b", "", [], null, "https://mcp.test/mcp", null, "http", new OAuthSpec(Provider: "notion")));
+        var tokens = await Task.WhenAll(a.GetAccessTokenAsync(CancellationToken.None), b.GetAccessTokenAsync(CancellationToken.None), a.GetAccessTokenAsync(CancellationToken.None));
+        Assert.All(tokens, t => Assert.Equal("A2", t));
+        Assert.Equal(1, world.Refreshes);
+    }
+
+    [Fact]
+    public void Store_chain_without_an_os_store_keeps_tokens_across_instances()
+    {
+        var dir = Path.Combine(_dir, "linux");
+        var first = SecureTokenStores.Build(null, new FileTokenStore(dir));
+        first.Set("x", new StoredToken { AccessToken = "t", TokenEndpoint = "e", ClientId = "c" });
+        var second = SecureTokenStores.Build(null, new FileTokenStore(dir)); // a new hub process
+        Assert.Equal("t", second.Get("x")!.AccessToken);
     }
 
     [Fact]
@@ -254,11 +295,14 @@ public class AuthTests : IDisposable
             try
             {
                 a.Set(account, new StoredToken { AccessToken = "va", TokenEndpoint = "x", ClientId = "c" });
+                b.Get(acc2); // b has now loaded the vault once
                 a.Set(acc2, new StoredToken { AccessToken = "vb", TokenEndpoint = "x", ClientId = "c" });
                 Assert.Equal("va", b.Get(account)!.AccessToken);
-                Assert.Equal("vb", b.Get(acc2)!.AccessToken);
+                Assert.Equal("vb", b.Reload(acc2)!.AccessToken);          // reload sees a's later write
+                b.Set(account + "-c", new StoredToken { AccessToken = "vc", TokenEndpoint = "x", ClientId = "c" });
+                Assert.Equal("vb", new MacOsKeychainStore().Get(acc2)!.AccessToken); // b's write merged, did not drop a's
             }
-            finally { a.Delete(account); a.Delete(acc2); }
+            finally { a.Delete(account); a.Delete(acc2); a.Delete(account + "-c"); }
             Assert.Null(new MacOsKeychainStore().Get(acc2));
         }
     }

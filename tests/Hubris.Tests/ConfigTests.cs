@@ -187,6 +187,57 @@ public class ConfigTests : IDisposable
     }
 
     [Fact]
+    public void Second_hijack_adds_to_the_snapshot_so_restore_returns_everything()
+    {
+        string path = Write(".claude.json", """{ "mcpServers": { "a": { "command": "x" } }, "projects": { "/p": { "mcpServers": { "b": { "command": "y" } } } } }""");
+        var client = ClientConfigScanner.Parse(ClientConfigScanner.ClaudeCode, path)!;
+        ClientConfigHijacker.Hijack(client, "/opt/Hubris", ["--stdio"]);
+
+        // The user adds servers after the takeover, then takes over again.
+        var root = (JsonObject)JsonNode.Parse(File.ReadAllText(path))!;
+        ((JsonObject)root["mcpServers"]!)["later"] = new JsonObject { ["command"] = "z" };
+        ((JsonObject)root["projects"]!)["/q"] = new JsonObject { ["mcpServers"] = new JsonObject { ["new"] = new JsonObject { ["command"] = "w" } } };
+        File.WriteAllText(path, root.ToJsonString());
+        client = ClientConfigScanner.Parse(ClientConfigScanner.ClaudeCode, path)!;
+        Assert.Equal(["later", "new"], client.Servers.Select(s => s.Name));
+        ClientConfigHijacker.Hijack(client, "/opt/Hubris", ["--stdio"]);
+
+        Assert.NotNull(ClientConfigHijacker.Restore(client));
+        var restored = (JsonObject)JsonNode.Parse(File.ReadAllText(path))!;
+        Assert.Equal(["a", "later"], ((JsonObject)restored["mcpServers"]!).Select(kv => kv.Key));
+        Assert.Equal(["b"], ((JsonObject)restored["projects"]!["/p"]!["mcpServers"]!).Select(kv => kv.Key));
+        Assert.Equal(["new"], ((JsonObject)restored["projects"]!["/q"]!["mcpServers"]!).Select(kv => kv.Key));
+    }
+
+    [Fact]
+    public void Hijack_writes_through_a_symlink_and_keeps_backups_out_of_the_project()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        string target = Write(Path.Combine("dotfiles", "mcp.json"), """{ "mcpServers": { "a": { "command": "x" } } }""");
+        string link = Path.Combine(_home, "proj", ".mcp.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(link)!);
+        File.CreateSymbolicLink(link, target);
+        var client = ClientConfigScanner.Parse(ClientConfigScanner.ProjectMcp, link)!;
+        string backup = ClientConfigHijacker.Hijack(client, "/opt/Hubris", ["--stdio"]);
+
+        Assert.NotNull(new FileInfo(link).LinkTarget);                        // still a link
+        Assert.Contains("hubris", File.ReadAllText(target));                  // the dotfiles target got the takeover
+        Assert.StartsWith(Path.Combine(_home, "backups"), backup);            // not next to the project file
+        Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(link)!, "*.bak*"));
+        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(backup));
+        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(ClientConfigHijacker.SnapshotPathFor(link)));
+        Assert.True(ClientConfigHijacker.HasRestorePoint(link));
+    }
+
+    [Fact]
+    public void Loop_guard_matches_the_gateway_key_and_binary_only()
+    {
+        Assert.True(ClientConfigScanner.IsHubrisEntry("hubris", new JsonObject { ["command"] = "node" }));
+        Assert.True(ClientConfigScanner.IsHubrisEntry("gw", new JsonObject { ["command"] = "/Applications/Hubris.app/Contents/MacOS/Hubris" }));
+        Assert.False(ClientConfigScanner.IsHubrisEntry("hubris-notes", new JsonObject { ["command"] = "node", ["args"] = new JsonArray("notes.js") }));
+    }
+
+    [Fact]
     public void Import_keeps_servers_that_differ_only_by_env()
     {
         string path = Write("cfg.json", """{ "mcpServers": { "gh": { "command": "npx", "args": ["gh"], "env": { "GITHUB_TOKEN": "a" } } } }""");

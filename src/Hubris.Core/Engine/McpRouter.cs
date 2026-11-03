@@ -274,6 +274,7 @@ public sealed class McpRouter
         }
 
         CallToolResult result;
+        int unlockedBefore = _registry.UnlockedCount; // per call, not a flag on the shared tool instance: parallel searches must each notify
         long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         try
         {
@@ -297,7 +298,7 @@ public sealed class McpRouter
         if (result.Failed && outcome == "ok") outcome = "error";
         _control?.EmitToolCall(callId, tool.Name, tool.RiskLevel, outcome, ms, args, result);
 
-        if (tool is IUnlockingTool { LastCallUnlocked: true })
+        if (tool is IUnlockingTool && _registry.UnlockedCount != unlockedBefore)
         {
             await SendToolsListChangedAsync().ConfigureAwait(false);
             _control?.EmitToolsChanged();
@@ -317,18 +318,31 @@ public sealed class McpRouter
 
     // ------------------------------------------------------------------ bridge events
 
+    private readonly SemaphoreSlim _refreshLock = new(1, 1);
+
+    /// <summary>Re-lists after list_changed (and after the first lazy start): one refresh at a time so an older list never lands last.</summary>
     private void OnBridgeToolsChanged(McpBridge bridge)
     {
         _ = Task.Run(async () =>
         {
+            await _refreshLock.WaitAsync(_shutdown.Token).ConfigureAwait(false);
             try
             {
                 var tools = await bridge.ListToolsAsync(_shutdown.Token).ConfigureAwait(false);
-                await ReplaceBridgeToolsAsync(bridge, tools).ConfigureAwait(false);
+                string fresh = JsonSerializer.Serialize(tools, McpJsonContext.Default.ListToolDefinition);
+                string current = JsonSerializer.Serialize(_registry.DefinitionsOf(bridge.Name), McpJsonContext.Default.ListToolDefinition);
+                if (!string.Equals(fresh, current, StringComparison.Ordinal))
+                    await ReplaceBridgeToolsAsync(bridge, tools).ConfigureAwait(false);
+                BridgeHost.Cache(_runtime, bridge, tools); // the cache must say what the server last said, for every other hub too
             }
+            catch (OperationCanceledException) { }
             catch (Exception ex)
             {
                 Log.Warn($"bridge '{bridge.Name}' tool refresh failed: {ex.Message}");
+            }
+            finally
+            {
+                _refreshLock.Release();
             }
         }, CancellationToken.None);
     }

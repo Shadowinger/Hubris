@@ -66,16 +66,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private void OnHubConnected(HubClient client)
     {
+        // The read loop starts after this returns (HubDiscovery calls client.Start()), so hello and replayed approvals are not lost.
         client.MessageReceived += OnMessage;
-        // The hub's hello may already have passed before we subscribed; ask again, ReplaceTools makes it idempotent.
-        _ = client.RequestToolsAsync();
-        _ = client.RequestStatusAsync();
         Dispatcher.UIThread.Post(() =>
         {
             var vm = new HubViewModel(client);
             vm.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(HubViewModel.PendingCount)) RaisePending(); };
             Hubs.Add(vm);
-            if (_selectedHub is null && ShowConfig && Hubs.Count == 1) { /* keep configurator until the user picks */ }
         });
     }
 
@@ -88,9 +85,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             {
                 if (Hubs[i].Pid != client.Pid) continue;
                 var vm = Hubs[i];
+                bool wasSelected = ReferenceEquals(_selectedHub, vm); // the ListBox clears the selection during RemoveAt
                 vm.MarkDisconnected();
                 Hubs.RemoveAt(i);
-                if (ReferenceEquals(_selectedHub, vm)) { SelectedHub = null; ShowConfig = true; }
+                if (wasSelected) { SelectedHub = null; ShowCatalog = false; ShowConfig = true; }
             }
         });
     }

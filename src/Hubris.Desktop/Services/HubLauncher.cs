@@ -72,15 +72,6 @@ public sealed class HubLauncher : IDisposable
         return p.Id;
     }
 
-    public bool Stop(int pid)
-    {
-        Process? p;
-        lock (_gate) p = _owned.Find(x => x.Id == pid);
-        if (p is null) return false;
-        try { p.StandardInput.Close(); } catch (Exception) { }
-        return true;
-    }
-
     public void Dispose()
     {
         Process[] all;

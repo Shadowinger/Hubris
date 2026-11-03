@@ -56,16 +56,6 @@ public static class SchemaBuilder
         return o;
     }
 
-    public static JsonObject Boolean(string description, bool? @default = null)
-    {
-        var o = new JsonObject
-        {
-            ["type"] = "boolean",
-            ["description"] = description,
-        };
-        if (@default is { } d) o["default"] = d;
-        return o;
-    }
 }
 
 /// <summary>Tolerant argument access: accepts numbers written as strings and vice versa.</summary>
@@ -93,16 +83,4 @@ public static class ArgReader
         return fallback;
     }
 
-    public static bool GetBool(JsonObject? args, string name, bool fallback)
-    {
-        if (args is null || !args.TryGetPropertyValue(name, out var node) || node is not JsonValue v) return fallback;
-        if (v.TryGetValue<bool>(out var b)) return b;
-        if (v.TryGetValue<string>(out var s))
-        {
-            if (string.Equals(s, "true", StringComparison.OrdinalIgnoreCase)) return true;
-            if (string.Equals(s, "false", StringComparison.OrdinalIgnoreCase)) return false;
-        }
-        if (v.TryGetValue<long>(out var l)) return l != 0;
-        return fallback;
-    }
 }

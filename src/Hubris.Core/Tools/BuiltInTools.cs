@@ -357,10 +357,9 @@ public sealed class FsReadHeadTool : IMcpTool
 
 // ============================================================================ mcp_search_tools
 
-/// <summary>Meta tools that may unlock on-demand tools report it here so the router can push list_changed.</summary>
+/// <summary>Marker for meta tools that may unlock on-demand tools; the router compares the registry's unlocked count around the call.</summary>
 public interface IUnlockingTool : IMcpTool
 {
-    bool LastCallUnlocked { get; }
 }
 
 public sealed class SearchToolsMetaTool : IUnlockingTool
@@ -379,12 +378,8 @@ public sealed class SearchToolsMetaTool : IUnlockingTool
         ("query", SchemaBuilder.String("Keywords describing the capability you need, e.g. 'git status' or 'read file'"), true),
         ("limit", SchemaBuilder.Integer("Maximum number of tools to return", 1, 50, 10), false));
 
-    /// <summary>True when the last execution unlocked at least one previously hidden tool.</summary>
-    public bool LastCallUnlocked { get; private set; }
-
     public ValueTask<CallToolResult> ExecuteAsync(JsonObject? arguments, CancellationToken ct)
     {
-        LastCallUnlocked = false;
         string query = ArgReader.GetString(arguments, "query", string.Empty)!;
         int limit = Math.Clamp(ArgReader.GetInt(arguments, "limit", 10), 1, 50);
 
@@ -396,13 +391,11 @@ public sealed class SearchToolsMetaTool : IUnlockingTool
             return ValueTask.FromResult(CallToolResult.Text($"No tools match '{query}'. {_registry.Count} tools registered in total."));
 
         var defs = new List<ToolDefinition>(hits.Count);
-        bool unlocked = false;
         foreach (var hit in hits)
         {
             defs.Add(ToolRegistry.ToDefinition(hit.Tool));
-            if (hit.Tool.Name != ToolName && _registry.Unlock(hit.Tool.Name)) unlocked = true;
+            if (hit.Tool.Name != ToolName) _registry.Unlock(hit.Tool.Name);
         }
-        LastCallUnlocked = unlocked;
 
         string json = JsonSerializer.Serialize(defs, McpJsonContext.Default.ListToolDefinition);
         string text = $"{hits.Count} tool(s) match '{query}'. They are unlocked: call them by name (tools/list now includes them) or via mcp_execute_tool {{\"toolName\", \"arguments\"}} if your client ignores notifications/tools/list_changed.\n{json}";
@@ -435,11 +428,8 @@ public sealed class ExecuteToolMetaTool : IUnlockingTool
         ("toolName", SchemaBuilder.String("Exact name of the tool to run (e.g. git_smart_status or gh__create_issue)"), true),
         ("arguments", new JsonObject { ["type"] = "object", ["description"] = "Arguments object for the target tool", ["additionalProperties"] = true }, false));
 
-    public bool LastCallUnlocked { get; private set; }
-
     public async ValueTask<CallToolResult> ExecuteAsync(JsonObject? arguments, CancellationToken ct)
     {
-        LastCallUnlocked = false;
         string? target = ArgReader.GetString(arguments, "toolName");
         if (string.IsNullOrWhiteSpace(target))
             return CallToolResult.Error("Argument 'toolName' is required.");
@@ -457,7 +447,7 @@ public sealed class ExecuteToolMetaTool : IUnlockingTool
 
         var invoker = Invoker ?? throw new InvalidOperationException("ExecuteToolMetaTool has no invoker installed.");
         var result = await invoker(target, targetArgs, ct).ConfigureAwait(false);
-        if (!result.Failed && _registry.Unlock(target)) LastCallUnlocked = true;
+        if (!result.Failed) _registry.Unlock(target);
         return result;
     }
 }

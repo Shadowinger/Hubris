@@ -28,7 +28,6 @@ public sealed class HubClient : IAsyncDisposable
 
     public HubDescriptor Descriptor { get; }
     public int Pid => Descriptor.Pid;
-    public bool IsConnected => _stream is not null && !_lifetime.IsCancellationRequested && _socket.Connected;
 
     public event Action<HubClient, ControlMessage>? MessageReceived;
     public event Action<HubClient>? Disconnected;
@@ -39,8 +38,10 @@ public sealed class HubClient : IAsyncDisposable
         _stream = new NetworkStream(_socket, ownsSocket: true);
         _reader = PipeReader.Create(_stream, new StreamPipeReaderOptions(leaveOpen: true));
         _writer = new JsonLineWriter(PipeWriter.Create(_stream, new StreamPipeWriterOptions(leaveOpen: true)));
-        _readLoop = Task.Run(() => ReadLoopAsync(_lifetime.Token), CancellationToken.None);
     }
+
+    /// <summary>Starts reading. Called after the subscribers are attached, so the hub's hello and replayed approvals reach them.</summary>
+    public void Start() => _readLoop ??= Task.Run(() => ReadLoopAsync(_lifetime.Token), CancellationToken.None);
 
     private async Task ReadLoopAsync(CancellationToken ct)
     {

@@ -11,7 +11,10 @@ public static class JsonLines
     /// Delivers every complete line (and a trailing unterminated one at EOF) to <paramref name="onLine"/>,
     /// then completes the reader. Cancellation ends the loop quietly; I/O errors propagate.
     /// </summary>
-    public static async Task ReadLoopAsync(PipeReader reader, Func<ReadOnlySequence<byte>, ValueTask> onLine, CancellationToken ct)
+    /// <summary>Default cap for one line; a peer that never sends '\n' must not grow the heap without end.</summary>
+    public const long DefaultMaxLine = 64L * 1024 * 1024;
+
+    public static async Task ReadLoopAsync(PipeReader reader, Func<ReadOnlySequence<byte>, ValueTask> onLine, CancellationToken ct, long maxLine = DefaultMaxLine)
     {
         try
         {
@@ -30,6 +33,7 @@ public static class JsonLines
                     reader.AdvanceTo(result.Buffer.End);
                     break;
                 }
+                if (buffer.Length > maxLine) throw new InvalidDataException($"line longer than {maxLine} bytes");
                 reader.AdvanceTo(buffer.Start, buffer.End);
             }
         }
