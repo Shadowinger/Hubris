@@ -455,13 +455,17 @@ public sealed class ToolGroup : ObservableObject
         int active = tools.Count(t => t.Pinned || t.Unlocked);
         int tokens = tools.Sum(t => t.Tokens);
         Summary = $"{active} active · ~{tokens} tok";
+        ToggleCommand = new RelayCommand(() => IsExpanded = !IsExpanded);
     }
+
+    public RelayCommand ToggleCommand { get; }
+    public string Chevron => _expanded ? "▾" : "▸";
 
     public string Name { get; }
     public List<ToolRow> Tools { get; }
     public string CountText => Tools.Count == 1 ? "1 tool" : $"{Tools.Count} tools";
     public string Summary { get; }
-    public bool IsExpanded { get => _expanded; set => Set(ref _expanded, value); }
+    public bool IsExpanded { get => _expanded; set { if (Set(ref _expanded, value)) Raise(nameof(Chevron)); } }
 }
 
 public sealed class ToolRow : ObservableObject

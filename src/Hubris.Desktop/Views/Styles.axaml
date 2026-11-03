@@ -97,15 +97,8 @@
         <Setter Property="BorderThickness" Value="0" />
     </Style>
 
-    <!-- tool groups: one expander per provider, flat on the card -->
-    <Style Selector="Expander.group">
-        <Setter Property="Background" Value="Transparent" />
-        <Setter Property="BorderThickness" Value="0" />
-        <Setter Property="CornerRadius" Value="0" />
-        <Setter Property="Padding" Value="0" />
-        <Setter Property="MinHeight" Value="0" />
-    </Style>
-    <Style Selector="Expander.group /template/ ToggleButton#PART_toggle">
+    <!-- tool groups: a flat full-width header per provider, hairline below, rows underneath -->
+    <Style Selector="Button.grouphead">
         <Setter Property="Background" Value="#0F1013" />
         <Setter Property="BorderBrush" Value="#16181D" />
         <Setter Property="BorderThickness" Value="0,0,0,1" />
@@ -113,14 +106,13 @@
         <Setter Property="Padding" Value="12,8" />
         <Setter Property="MinHeight" Value="0" />
     </Style>
-    <Style Selector="Expander.group /template/ ToggleButton#PART_toggle:pointerover /template/ Border">
+    <Style Selector="Button.grouphead:pointerover /template/ ContentPresenter#PART_ContentPresenter">
         <Setter Property="Background" Value="#14161B" />
-    </Style>
-    <Style Selector="Expander.group /template/ Border#ExpanderContent">
-        <Setter Property="Background" Value="Transparent" />
-        <Setter Property="BorderThickness" Value="0,0,0,1" />
         <Setter Property="BorderBrush" Value="#16181D" />
-        <Setter Property="Padding" Value="0" />
+    </Style>
+    <Style Selector="Button.grouphead:pressed /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="#181A20" />
+        <Setter Property="BorderBrush" Value="#16181D" />
     </Style>
 
     <!-- ============================================================ pills -->
