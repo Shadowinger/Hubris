@@ -146,25 +146,31 @@
                             </Grid>
                         </Border>
 
-                        <!-- connections: bridges with an OAuth block, one row each -->
-                        <Border Grid.Row="1" Classes="card" Margin="0,10,0,0" IsVisible="{Binding HasAuth}">
-                            <StackPanel Spacing="4">
-                                <TextBlock Classes="title" Text="Connections" />
-                                <ItemsControl ItemsSource="{Binding Auth}">
+                        <!-- connections: bridges with an OAuth block, one aligned row each -->
+                        <StackPanel Grid.Row="1" IsVisible="{Binding HasAuth}">
+                            <TextBlock Classes="title" Margin="0,16,0,6" Text="Connections" />
+                            <Border Classes="card" Padding="0" ClipToBounds="True">
+                                <ItemsControl Classes="rows" ItemsSource="{Binding Auth}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate x:DataType="vm:AuthRow">
-                                            <Grid ColumnDefinitions="160,Auto,*,Auto,Auto" ColumnSpacing="10" Margin="0,6,0,0">
-                                                <TextBlock Grid.Column="0" Classes="mono" VerticalAlignment="Center" Text="{Binding Bridge}" />
-                                                <Border Grid.Column="1" Classes="pill" Classes.ok="{Binding IsConnected}" Classes.warn="{Binding IsPending}" Classes.danger="{Binding IsBroken}" VerticalAlignment="Center"><TextBlock Text="{Binding State}" /></Border>
-                                                <TextBlock Grid.Column="2" Classes="muted" FontSize="11" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="{Binding Detail}" />
-                                                <Button Grid.Column="3" Classes="approve" Command="{Binding ConnectCommand}" Content="{Binding ConnectLabel}" IsEnabled="{Binding CanConnect}" ToolTip.Tip="Opens the browser to sign in; the token is kept in the OS secret store" />
-                                                <Button Grid.Column="4" Classes="ghost" Command="{Binding RevokeCommand}" Content="Disconnect" IsVisible="{Binding HasToken}" ToolTip.Tip="Forget the stored token" />
-                                            </Grid>
+                                            <Border Classes="row">
+                                                <Grid ColumnDefinitions="170,Auto,*,Auto,Auto" ColumnSpacing="10">
+                                                    <TextBlock Grid.Column="0" Classes="strong" FontWeight="Medium" VerticalAlignment="Center" Text="{Binding Bridge}" TextTrimming="CharacterEllipsis" />
+                                                    <Border Grid.Column="1" Classes="pill" MinWidth="88" VerticalAlignment="Center" Classes.ok="{Binding IsConnected}" Classes.warn="{Binding IsPending}" Classes.danger="{Binding IsBroken}">
+                                                        <TextBlock Text="{Binding State}" HorizontalAlignment="Center" />
+                                                    </Border>
+                                                    <TextBlock Grid.Column="2" Classes="secondary" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="{Binding Detail}" />
+                                                    <Button Grid.Column="3" Command="{Binding ConnectCommand}" Content="{Binding ConnectLabel}" IsEnabled="{Binding CanConnect}" MinWidth="104" HorizontalContentAlignment="Center" VerticalAlignment="Center" ToolTip.Tip="Opens the browser to sign in; the token is kept in the OS secret store" />
+                                                    <Panel Grid.Column="4" MinWidth="96" VerticalAlignment="Center">
+                                                        <Button Classes="ghost" Command="{Binding RevokeCommand}" Content="Disconnect" IsVisible="{Binding HasToken}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" ToolTip.Tip="Forget the stored token" />
+                                                    </Panel>
+                                                </Grid>
+                                            </Border>
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
-                            </StackPanel>
-                        </Border>
+                            </Border>
+                        </StackPanel>
 
                         <DockPanel Grid.Row="2" Margin="0,16,0,6">
                             <Button DockPanel.Dock="Right" Classes="ghost" Command="{Binding ClearEventsCommand}" Padding="6,1" MinHeight="20" FontSize="11" Content="Clear" />
