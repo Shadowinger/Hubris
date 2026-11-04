@@ -39,7 +39,7 @@ internal sealed class FakeStreamableServer : HttpMessageHandler
             var r = Json(msg["id"], new JsonObject
             {
                 ["protocolVersion"] = "2025-03-26",
-                ["capabilities"] = new JsonObject { ["tools"] = new JsonObject() },
+                ["capabilities"] = new JsonObject { ["tools"] = new JsonObject(), ["resources"] = new JsonObject(), ["prompts"] = new JsonObject() },
                 ["serverInfo"] = new JsonObject { ["name"] = "fake-remote", ["version"] = "9" },
             });
             r.Headers.Add("Mcp-Session-Id", Session);
@@ -73,6 +73,19 @@ internal sealed class FakeStreamableServer : HttpMessageHandler
             return Json(msg["id"], new JsonObject { ["content"] = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = "echo:" + name }) });
         }
         if (method == "notifications/cancelled") return new HttpResponseMessage(HttpStatusCode.Accepted);
+        if (method == "resources/list") return Json(msg["id"], new JsonObject { ["resources"] = new JsonArray(new JsonObject { ["uri"] = "fake://doc/1", ["name"] = "doc", ["mimeType"] = "text/plain" }) });
+        if (method == "resources/templates/list") return Json(msg["id"], new JsonObject { ["resourceTemplates"] = new JsonArray(new JsonObject { ["uriTemplate"] = "fake://item/{id}", ["name"] = "item" }) });
+        if (method == "resources/read")
+        {
+            string uri = msg["params"]!["uri"]!.GetValue<string>();
+            return Json(msg["id"], new JsonObject { ["contents"] = new JsonArray(new JsonObject { ["uri"] = uri, ["mimeType"] = "text/plain", ["text"] = $"body of {uri} password=hunter2" }) });
+        }
+        if (method == "prompts/list") return Json(msg["id"], new JsonObject { ["prompts"] = new JsonArray(new JsonObject { ["name"] = "greet", ["arguments"] = new JsonArray(new JsonObject { ["name"] = "who", ["required"] = true }) }) });
+        if (method == "prompts/get")
+        {
+            string who = msg["params"]!["arguments"]!["who"]!.GetValue<string>();
+            return Json(msg["id"], new JsonObject { ["messages"] = new JsonArray(new JsonObject { ["role"] = "user", ["content"] = new JsonObject { ["type"] = "text", ["text"] = "hi " + who } }) });
+        }
         return Json(msg["id"], null, error: new JsonObject { ["code"] = -32601, ["message"] = "nope" });
     }
 
@@ -152,6 +165,37 @@ public class HttpBridgeTests
         var tool = new BridgedTool(bridge, tools[1]);
         Assert.Equal("api__zap", tool.Name);
         Assert.Equal(ToolRiskLevel.Destructive, tool.RiskLevel);
+    }
+
+    [Fact]
+    public async Task Remote_bridge_lists_resources_and_prompts_and_serves_them()
+    {
+        var server = new FakeStreamableServer();
+        await using var bridge = new HttpMcpBridge(Remote(), server);
+        await bridge.StartAsync(CancellationToken.None);
+        Assert.True(bridge.HasResources);
+        Assert.True(bridge.HasPrompts);
+
+        var extras = await bridge.FetchExtrasAsync(CancellationToken.None);
+        Assert.Equal("fake://doc/1", extras.Resources.Single()["uri"]!.GetValue<string>());
+        Assert.Equal("fake://item/{id}", extras.ResourceTemplates.Single()["uriTemplate"]!.GetValue<string>());
+        Assert.Equal("greet", extras.Prompts.Single()["name"]!.GetValue<string>());
+
+        var read = (JsonObject)(await bridge.ReadResourceAsync("fake://item/7", CancellationToken.None))!;
+        Assert.Contains("body of fake://item/7", read["contents"]![0]!["text"]!.GetValue<string>());
+        var prompt = (JsonObject)(await bridge.GetPromptAsync("greet", new JsonObject { ["who"] = "you" }, CancellationToken.None))!;
+        Assert.Equal("hi you", prompt["messages"]![0]!["content"]!["text"]!.GetValue<string>());
+
+        // The cache keeps them next to the tools, under the same hash and TTL.
+        string dir = Directory.CreateTempSubdirectory("hubris-extras-").FullName;
+        using var cache = new ToolCacheStore(Path.Combine(dir, "t.db"), TimeSpan.FromHours(1));
+        cache.Open();
+        cache.PutExtras("api", bridge.ConfigHash, extras);
+        Assert.Equal("greet", cache.TryGetExtras("api", bridge.ConfigHash)!.Prompts[0]["name"]!.GetValue<string>());
+        Assert.Null(cache.TryGetExtras("api", "other-hash"));
+        cache.Invalidate("api");
+        Assert.Null(cache.TryGetExtras("api", bridge.ConfigHash));
+        Directory.Delete(dir, true);
     }
 
     [Fact]

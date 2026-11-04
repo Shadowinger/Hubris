@@ -44,6 +44,11 @@ public sealed class ToolCacheStore : IDisposable
                 tools_json     TEXT NOT NULL,
                 token_estimate INTEGER NOT NULL,
                 updated_at     INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS bridge_extras(
+                bridge_name    TEXT PRIMARY KEY,
+                config_hash    TEXT NOT NULL,
+                extras_json    TEXT NOT NULL,
+                updated_at     INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
             """);
         _db = db;
@@ -114,9 +119,44 @@ public sealed class ToolCacheStore : IDisposable
         lock (_gate)
         {
             using var cmd = Require().CreateCommand();
-            cmd.CommandText = "DELETE FROM bridge_cache WHERE bridge_name = $n";
+            cmd.CommandText = "DELETE FROM bridge_cache WHERE bridge_name = $n; DELETE FROM bridge_extras WHERE bridge_name = $n";
             cmd.Parameters.AddWithValue("$n", bridgeName);
             return cmd.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>Resources, templates and prompts of a bridge, valid under the same hash and TTL rules as its tools.</summary>
+    public BridgeExtras? TryGetExtras(string bridgeName, string configHash)
+    {
+        lock (_gate)
+        {
+            using var cmd = Require().CreateCommand();
+            cmd.CommandText = "SELECT config_hash, extras_json, updated_at FROM bridge_extras WHERE bridge_name = $n";
+            cmd.Parameters.AddWithValue("$n", bridgeName);
+            using var r = cmd.ExecuteReader();
+            if (!r.Read()) return null;
+            bool fresh = string.Equals(r.GetString(0), configHash, StringComparison.Ordinal)
+                         && DateTimeOffset.UtcNow.ToUnixTimeSeconds() - r.GetInt64(2) <= (long)_ttl.TotalSeconds;
+            if (!fresh) return null;
+            try { return JsonSerializer.Deserialize(r.GetString(1), McpJsonContext.Default.BridgeExtras); }
+            catch (JsonException ex) { Log.Warn($"extras cache entry for '{bridgeName}' unreadable: {ex.Message}"); return null; }
+        }
+    }
+
+    public void PutExtras(string bridgeName, string configHash, BridgeExtras extras)
+    {
+        lock (_gate)
+        {
+            using var cmd = Require().CreateCommand();
+            cmd.CommandText = """
+                INSERT INTO bridge_extras(bridge_name, config_hash, extras_json, updated_at) VALUES ($n, $h, $j, $u)
+                ON CONFLICT(bridge_name) DO UPDATE SET config_hash = $h, extras_json = $j, updated_at = $u
+                """;
+            cmd.Parameters.AddWithValue("$n", bridgeName);
+            cmd.Parameters.AddWithValue("$h", configHash);
+            cmd.Parameters.AddWithValue("$j", JsonSerializer.Serialize(extras, McpJsonContext.Default.BridgeExtras));
+            cmd.Parameters.AddWithValue("$u", DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+            cmd.ExecuteNonQuery();
         }
     }
 

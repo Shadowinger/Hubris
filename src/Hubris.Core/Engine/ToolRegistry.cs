@@ -26,6 +26,9 @@ public sealed class HubRuntime
     public Hubris.Auth.OAuthManager? Auth { get; init; }
     /// <summary>Appended by reload_config on a socket thread while the status loop enumerates: a queue snapshots on enumerate.</summary>
     public ConcurrentQueue<McpBridge> Bridges { get; } = new();
+    /// <summary>Resources, templates and prompts per bridge name, served to the client as one list.</summary>
+    public ConcurrentDictionary<string, BridgeExtras> Extras { get; } = new(StringComparer.Ordinal);
+    public McpBridge? Bridge(string name) { foreach (var b in Bridges) if (b.Name == name) return b; return null; }
     public int BridgeCount => Bridges.Count;
     public int BridgesRunning { get { int n = 0; foreach (var b in Bridges) if (b.IsAlive) n++; return n; } }
     public const string Version = "1.3.0";

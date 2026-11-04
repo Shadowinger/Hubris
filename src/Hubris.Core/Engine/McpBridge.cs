@@ -45,6 +45,9 @@ public abstract class McpBridge : IAsyncDisposable
     /// <summary>A bridge that can be brought back by <see cref="StartAsync"/> after it died (a remote session can; a dead child cannot).</summary>
     public virtual bool CanRestart => false;
     public Implementation? ServerInfo { get; protected set; }
+    /// <summary>From the initialize answer; a server without the capability is never asked for the list.</summary>
+    public bool HasResources { get; protected set; }
+    public bool HasPrompts { get; protected set; }
 
     /// <summary>Raised when the server announces notifications/tools/list_changed.</summary>
     public event Action<McpBridge>? ToolsChanged;
@@ -133,8 +136,61 @@ public abstract class McpBridge : IAsyncDisposable
                     Version = si["version"]?.GetValue<string>() ?? "?",
                 };
             if (io["protocolVersion"] is JsonValue pv && pv.TryGetValue<string>(out var v) && !string.IsNullOrWhiteSpace(v)) version = v;
+            if (io["capabilities"] is JsonObject caps)
+            {
+                HasResources = caps["resources"] is JsonObject;
+                HasPrompts = caps["prompts"] is JsonObject;
+            }
         }
         return version;
+    }
+
+    /// <summary>Resources, resource templates and prompts the server offers; empty parts for capabilities it did not declare.</summary>
+    public async Task<BridgeExtras> FetchExtrasAsync(CancellationToken ct)
+    {
+        var extras = new BridgeExtras();
+        if (HasResources)
+        {
+            extras.Resources = await ListPagedAsync("resources/list", "resources", ct).ConfigureAwait(false);
+            extras.ResourceTemplates = await ListPagedAsync("resources/templates/list", "resourceTemplates", ct).ConfigureAwait(false);
+        }
+        if (HasPrompts) extras.Prompts = await ListPagedAsync("prompts/list", "prompts", ct).ConfigureAwait(false);
+        return extras;
+    }
+
+    private async Task<List<JsonObject>> ListPagedAsync(string method, string key, CancellationToken ct)
+    {
+        var all = new List<JsonObject>();
+        string? cursor = null;
+        int pages = 0;
+        do
+        {
+            JsonObject? p = cursor is null ? null : new JsonObject { ["cursor"] = cursor };
+            JsonNode? node;
+            try { node = await SendRequestAsync(method, p, ct, TimeSpan.FromSeconds(30)).ConfigureAwait(false); }
+            catch (McpBridgeException ex) when (ex.Code == JsonRpcErrorCodes.MethodNotFound) { break; } // declared but not served: treat as none
+            if (node is not JsonObject o) break;
+            if (o[key] is JsonArray items)
+                foreach (var item in items) if (item is JsonObject io) all.Add((JsonObject)io.DeepClone());
+            cursor = o["nextCursor"] is JsonValue cv && cv.TryGetValue<string>(out var c) ? c : null;
+        } while (cursor is not null && ++pages < 64);
+        return all;
+    }
+
+    /// <summary>resources/read, passed through; the caller masks secrets in the text parts.</summary>
+    public async Task<JsonNode?> ReadResourceAsync(string uri, CancellationToken ct)
+    {
+        await EnsureStartedAsync(ct).ConfigureAwait(false);
+        return await SendRequestAsync("resources/read", new JsonObject { ["uri"] = uri }, ct, TimeSpan.FromMinutes(2)).ConfigureAwait(false);
+    }
+
+    /// <summary>prompts/get with the remote (unprefixed) prompt name.</summary>
+    public async Task<JsonNode?> GetPromptAsync(string remoteName, JsonObject? arguments, CancellationToken ct)
+    {
+        await EnsureStartedAsync(ct).ConfigureAwait(false);
+        var p = new JsonObject { ["name"] = remoteName };
+        if (arguments is not null) p["arguments"] = arguments.DeepClone();
+        return await SendRequestAsync("prompts/get", p, ct, TimeSpan.FromMinutes(2)).ConfigureAwait(false);
     }
 
     protected static JsonNode? IdToNode(RpcId id) => id.Kind switch

@@ -136,15 +136,112 @@ public sealed class McpRouter
                 await HandleToolCallAsync(msg, ct).ConfigureAwait(false);
                 break;
             case "resources/list":
-                await _transport.SendResultAsync(msg.Id, new EmptyListResult { Resources = new List<JsonObject>() }, McpJsonContext.Default.EmptyListResult, ct).ConfigureAwait(false);
+            {
+                var all = new ListResourcesResult();
+                foreach (var kv in _runtime.Extras) all.Resources.AddRange(kv.Value.Resources);
+                await _transport.SendResultAsync(msg.Id, all, McpJsonContext.Default.ListResourcesResult, ct).ConfigureAwait(false);
+                break;
+            }
+            case "resources/templates/list":
+            {
+                var all = new ListResourceTemplatesResult();
+                foreach (var kv in _runtime.Extras) all.ResourceTemplates.AddRange(kv.Value.ResourceTemplates);
+                await _transport.SendResultAsync(msg.Id, all, McpJsonContext.Default.ListResourceTemplatesResult, ct).ConfigureAwait(false);
+                break;
+            }
+            case "resources/read":
+                await HandleResourceReadAsync(msg, ct).ConfigureAwait(false);
                 break;
             case "prompts/list":
-                await _transport.SendResultAsync(msg.Id, new EmptyListResult { Prompts = new List<JsonObject>() }, McpJsonContext.Default.EmptyListResult, ct).ConfigureAwait(false);
+            {
+                // Prompt names get the bridge prefix like tools do, so prompts/get can find the owner.
+                var all = new ListPromptsResult();
+                foreach (var kv in _runtime.Extras)
+                    foreach (var p in kv.Value.Prompts)
+                    {
+                        var copy = (JsonObject)p.DeepClone();
+                        copy["name"] = kv.Key + "__" + (p["name"]?.GetValue<string>() ?? "");
+                        all.Prompts.Add(copy);
+                    }
+                await _transport.SendResultAsync(msg.Id, all, McpJsonContext.Default.ListPromptsResult, ct).ConfigureAwait(false);
+                break;
+            }
+            case "prompts/get":
+                await HandlePromptGetAsync(msg, ct).ConfigureAwait(false);
                 break;
             default:
                 await _transport.SendErrorAsync(msg.Id, JsonRpcErrorCodes.MethodNotFound, $"Method not found: {msg.Method}", null, ct).ConfigureAwait(false);
                 break;
         }
+    }
+
+    /// <summary>The bridge that listed the URI, else the one whose template prefix (up to the first '{') matches.</summary>
+    private McpBridge? OwnerOfResource(string uri)
+    {
+        foreach (var kv in _runtime.Extras)
+            foreach (var r in kv.Value.Resources)
+                if (r["uri"] is JsonValue v && v.TryGetValue<string>(out var u) && u == uri) return _runtime.Bridge(kv.Key);
+        McpBridge? best = null;
+        int bestLen = -1;
+        foreach (var kv in _runtime.Extras)
+            foreach (var t in kv.Value.ResourceTemplates)
+            {
+                if (t["uriTemplate"] is not JsonValue v || !v.TryGetValue<string>(out var tpl)) continue;
+                int brace = tpl.IndexOf('{');
+                string prefix = brace < 0 ? tpl : tpl[..brace];
+                if (prefix.Length > bestLen && uri.StartsWith(prefix, StringComparison.Ordinal)) { best = _runtime.Bridge(kv.Key); bestLen = prefix.Length; }
+            }
+        return best;
+    }
+
+    private async Task HandleResourceReadAsync(JsonRpcMessage msg, CancellationToken ct)
+    {
+        string? uri = msg.Params?["uri"] is JsonValue v && v.TryGetValue<string>(out var u) ? u : null;
+        if (string.IsNullOrEmpty(uri))
+        {
+            await _transport.SendErrorAsync(msg.Id, JsonRpcErrorCodes.InvalidParams, "resources/read requires 'uri'", null, ct).ConfigureAwait(false);
+            return;
+        }
+        var bridge = OwnerOfResource(uri);
+        if (bridge is null)
+        {
+            await _transport.SendErrorAsync(msg.Id, -32002, $"Resource not found: {uri}", null, ct).ConfigureAwait(false);
+            return;
+        }
+        JsonNode? result;
+        try { result = await bridge.ReadResourceAsync(uri, ct).ConfigureAwait(false); }
+        catch (McpBridgeException ex) { await _transport.SendErrorAsync(msg.Id, ex.Code, ex.Message, null, ct).ConfigureAwait(false); return; }
+        catch (Exception ex) when (ex is TimeoutException or HttpRequestException or IOException)
+        { await _transport.SendErrorAsync(msg.Id, JsonRpcErrorCodes.InternalError, $"bridge '{bridge.Name}': {ex.Message}", null, ct).ConfigureAwait(false); return; }
+
+        // Same DLP as tool results: the model must not see secrets through a resource either.
+        if (result is JsonObject o && o["contents"] is JsonArray contents)
+            foreach (var c in contents)
+                if (c is JsonObject co && co["text"] is JsonValue tv && tv.TryGetValue<string>(out var text) && text.Length > 0)
+                {
+                    string clean = DlpSanitizer.Sanitize(text);
+                    if (!ReferenceEquals(clean, text)) co["text"] = clean;
+                }
+        await _transport.SendResultAsync(msg.Id, result ?? new JsonObject(), McpJsonContext.Default.JsonNode, ct).ConfigureAwait(false);
+    }
+
+    private async Task HandlePromptGetAsync(JsonRpcMessage msg, CancellationToken ct)
+    {
+        string? name = msg.Params?["name"] is JsonValue v && v.TryGetValue<string>(out var n) ? n : null;
+        int sep = name?.IndexOf("__", StringComparison.Ordinal) ?? -1;
+        var bridge = sep > 0 ? _runtime.Bridge(name![..sep]) : null;
+        if (bridge is null)
+        {
+            await _transport.SendErrorAsync(msg.Id, JsonRpcErrorCodes.InvalidParams, $"Unknown prompt '{name}'; prompts/list gives the names", null, ct).ConfigureAwait(false);
+            return;
+        }
+        var args = msg.Params?["arguments"] as JsonObject;
+        JsonNode? result;
+        try { result = await bridge.GetPromptAsync(name![(sep + 2)..], args, ct).ConfigureAwait(false); }
+        catch (McpBridgeException ex) { await _transport.SendErrorAsync(msg.Id, ex.Code, ex.Message, null, ct).ConfigureAwait(false); return; }
+        catch (Exception ex) when (ex is TimeoutException or HttpRequestException or IOException)
+        { await _transport.SendErrorAsync(msg.Id, JsonRpcErrorCodes.InternalError, $"bridge '{bridge.Name}': {ex.Message}", null, ct).ConfigureAwait(false); return; }
+        await _transport.SendResultAsync(msg.Id, result ?? new JsonObject(), McpJsonContext.Default.JsonNode, ct).ConfigureAwait(false);
     }
 
     private async Task HandleInitializeAsync(JsonRpcMessage msg, CancellationToken ct)
@@ -175,7 +272,7 @@ public sealed class McpRouter
         string instructions = _runtime.Mode == ExecutionMode.Safe
             ? $"Hubris runs in {modeText} mode: read-only tools execute immediately; mutating tools are scanned for destructive patterns and destructive tools are blocked. A blocked call either waits for the user to approve it in the Hubris desktop app or returns isError=true with a [SAFE MODE BLOCKED] message – in that case ask the user to approve it or to switch Hubris to Bypass mode."
             : $"Hubris runs in {modeText} mode: all tool calls execute without policy checks.";
-        instructions += $" Use {SearchToolsMetaTool.ToolName} with keywords to discover additional tools; discovered tools are unlocked and can be called directly or through {ExecuteToolMetaTool.ToolName}.";
+        instructions += $" Use {SearchToolsMetaTool.ToolName} with keywords to discover additional tools; discovered tools are unlocked and can be called directly or through {ExecuteToolMetaTool.ToolName}. Resources and prompts of the bridged servers are listed as-is (prompt names carry the bridge prefix).";
         if (_runtime.CompactContext)
             instructions += " Compact context is enabled: only core tools are listed until unlocked.";
 
@@ -334,6 +431,11 @@ public sealed class McpRouter
                 if (!string.Equals(fresh, current, StringComparison.Ordinal))
                     await ReplaceBridgeToolsAsync(bridge, tools).ConfigureAwait(false);
                 BridgeHost.Cache(_runtime, bridge, tools); // the cache must say what the server last said, for every other hub too
+                if (await BridgeHost.RefreshExtrasAsync(_runtime, bridge, _shutdown.Token).ConfigureAwait(false) && _initialized)
+                {
+                    await _transport.SendNotificationAsync("notifications/resources/list_changed", null, _shutdown.Token).ConfigureAwait(false);
+                    await _transport.SendNotificationAsync("notifications/prompts/list_changed", null, _shutdown.Token).ConfigureAwait(false);
+                }
             }
             catch (OperationCanceledException) { }
             catch (Exception ex)

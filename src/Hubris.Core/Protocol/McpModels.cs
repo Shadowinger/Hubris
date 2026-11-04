@@ -70,6 +70,36 @@ public sealed class ToolsCapability
 public sealed class ServerCapabilities
 {
     [JsonPropertyName("tools")] public ToolsCapability Tools { get; set; } = new();
+    [JsonPropertyName("resources")] public ToolsCapability Resources { get; set; } = new();
+    [JsonPropertyName("prompts")] public ToolsCapability Prompts { get; set; } = new();
+}
+
+/// <summary>What a bridge offers besides tools: passed through as the server sent them, names of prompts get the bridge prefix.</summary>
+public sealed class BridgeExtras
+{
+    [JsonPropertyName("resources")] public List<JsonObject> Resources { get; set; } = new();
+    [JsonPropertyName("resourceTemplates")] public List<JsonObject> ResourceTemplates { get; set; } = new();
+    [JsonPropertyName("prompts")] public List<JsonObject> Prompts { get; set; } = new();
+
+    public bool IsEmpty => Resources.Count == 0 && ResourceTemplates.Count == 0 && Prompts.Count == 0;
+}
+
+public sealed class ListResourcesResult
+{
+    [JsonPropertyName("resources")] public List<JsonObject> Resources { get; set; } = new();
+    [JsonPropertyName("nextCursor")] public string? NextCursor { get; set; }
+}
+
+public sealed class ListResourceTemplatesResult
+{
+    [JsonPropertyName("resourceTemplates")] public List<JsonObject> ResourceTemplates { get; set; } = new();
+    [JsonPropertyName("nextCursor")] public string? NextCursor { get; set; }
+}
+
+public sealed class ListPromptsResult
+{
+    [JsonPropertyName("prompts")] public List<JsonObject> Prompts { get; set; } = new();
+    [JsonPropertyName("nextCursor")] public string? NextCursor { get; set; }
 }
 
 public sealed class InitializeResult
@@ -136,13 +166,7 @@ public sealed class CancelledParams
     [JsonPropertyName("reason")] public string? Reason { get; set; }
 }
 
-/// <summary>Empty result object for ping / resources/list / prompts/list.</summary>
+/// <summary>Empty result object for ping.</summary>
 public sealed class EmptyResult
 {
-}
-
-public sealed class EmptyListResult
-{
-    [JsonPropertyName("resources")] public List<JsonObject>? Resources { get; set; }
-    [JsonPropertyName("prompts")] public List<JsonObject>? Prompts { get; set; }
 }

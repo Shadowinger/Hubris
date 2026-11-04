@@ -40,6 +40,11 @@ client ──stdio──▶ Hubris ──stdio──▶ bridge 1 (npx …)
   and `mcp_execute_tool`. It searches by keyword, the matches get unlocked (`notifications/tools/list_changed`),
   and it calls them directly or through `mcp_execute_tool {toolName, arguments}`. `Lock` in the desktop app
   puts them away again.
+- **Resources and prompts.** A bridge's resources, resource templates and prompts are passed through: `resources/list`
+  and `resources/templates/list` merge every bridge's lists, `resources/read` is routed to the bridge that listed the
+  URI (or whose template prefix matches) and its text goes through DLP, prompts carry the bridge prefix
+  (`notion__summarize`) and `prompts/get` strips it. They are cached next to the tools, so they are listed without
+  starting anything, and refreshed on the server's list_changed notifications.
 - **Tool cache.** Bridge tool definitions are stored in `~/.hubris/cache.db` keyed by command, args and env
   key names (url, transport and header names for a remote server), with a TTL (`--cache-ttl`, default 24 h).
   On the next start the definitions are served from the cache; the child process is only started, or the

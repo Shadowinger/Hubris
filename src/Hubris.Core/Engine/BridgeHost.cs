@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Hubris.Caching;
 using Hubris.Cli;
 using Hubris.Config;
@@ -32,6 +33,7 @@ public sealed class BridgeHost
         if (cachedTools is not null)
         {
             foreach (var def in cachedTools) _registry.Register(new BridgedTool(bridge, def));
+            if (_rt.ToolCache?.TryGetExtras(spec.Name, bridge.ConfigHash) is { } cachedExtras) _rt.Extras[spec.Name] = cachedExtras;
             _rt.Bridges.Enqueue(bridge);
             Log.Info($"bridge '{spec.Name}' exposes {cachedTools.Count} tool(s) from cache; {(spec.IsRemote ? "not connected yet" : "process not started")}");
             return bridge;
@@ -44,6 +46,7 @@ public sealed class BridgeHost
             _rt.Bridges.Enqueue(bridge);
             Log.Info($"bridge '{spec.Name}' exposes {tools.Count} tool(s)" + (bridge.ServerInfo is { } si ? $" ({si.Name} {si.Version})" : string.Empty));
             Cache(_rt, bridge, tools);
+            await RefreshExtrasAsync(_rt, bridge, ct).ConfigureAwait(false);
             return bridge;
         }
         catch (NotSignedInException)
@@ -59,6 +62,25 @@ public sealed class BridgeHost
             await bridge.DisposeAsync().ConfigureAwait(false);
             return null;
         }
+    }
+
+    /// <summary>Fetches the bridge's resources/templates/prompts, stores them for the client and the cache. Returns true when they changed.</summary>
+    public static async Task<bool> RefreshExtrasAsync(HubRuntime rt, McpBridge bridge, CancellationToken ct)
+    {
+        BridgeExtras extras;
+        try { extras = await bridge.FetchExtrasAsync(ct).ConfigureAwait(false); }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex) when (ex is McpBridgeException or TimeoutException or HttpRequestException or IOException)
+        {
+            Log.Warn($"bridge '{bridge.Name}' resources/prompts not listed: {ex.Message}");
+            return false;
+        }
+        string fresh = JsonSerializer.Serialize(extras, McpJsonContext.Default.BridgeExtras);
+        string before = rt.Extras.TryGetValue(bridge.Name, out var old) ? JsonSerializer.Serialize(old, McpJsonContext.Default.BridgeExtras) : "";
+        rt.Extras[bridge.Name] = extras;
+        rt.ToolCache?.PutExtras(bridge.Name, bridge.ConfigHash, extras);
+        if (!extras.IsEmpty) Log.Info($"bridge '{bridge.Name}' offers {extras.Resources.Count} resource(s), {extras.ResourceTemplates.Count} template(s), {extras.Prompts.Count} prompt(s)");
+        return !string.Equals(fresh, before, StringComparison.Ordinal);
     }
 
     public static void Cache(HubRuntime rt, McpBridge bridge, List<ToolDefinition> tools)

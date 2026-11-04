@@ -285,7 +285,7 @@ public sealed class ExternalMcpBridge : McpBridge
         if (msg.Id.IsNone)
         {
             // Notification from child.
-            if (string.Equals(msg.Method, "notifications/tools/list_changed", StringComparison.Ordinal))
+            if (msg.Method is "notifications/tools/list_changed" or "notifications/resources/list_changed" or "notifications/prompts/list_changed")
                 RaiseToolsChanged();
             else
                 Log.Debug($"bridge '{Name}' notification {msg.Method}");

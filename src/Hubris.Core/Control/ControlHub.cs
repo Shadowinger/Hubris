@@ -443,6 +443,7 @@ public sealed class ControlHub : IAsyncDisposable
             var tools = await bridge.StartAsync(_lifetime.Token).ConfigureAwait(false);
             if (ReplaceBridgeTools is { } replace) await replace(bridge, tools).ConfigureAwait(false);
             BridgeHost.Cache(_rt, bridge, tools);
+            await BridgeHost.RefreshExtrasAsync(_rt, bridge, _lifetime.Token).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

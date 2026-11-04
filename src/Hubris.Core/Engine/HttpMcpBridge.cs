@@ -380,7 +380,7 @@ public sealed class HttpMcpBridge : McpBridge
         }
         if (msg.Id.IsNone)
         {
-            if (string.Equals(msg.Method, "notifications/tools/list_changed", StringComparison.Ordinal)) RaiseToolsChanged();
+            if (msg.Method is "notifications/tools/list_changed" or "notifications/resources/list_changed" or "notifications/prompts/list_changed") RaiseToolsChanged();
             else Log.Debug($"bridge '{Name}' notification {msg.Method}");
             return;
         }

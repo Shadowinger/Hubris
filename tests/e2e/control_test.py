@@ -35,6 +35,20 @@ init, _ = rpc({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolV
 check(init["result"]["serverInfo"]["name"] == "Hubris", "initialize")
 hub.stdin.write(json.dumps({"jsonrpc":"2.0","method":"notifications/initialized"}) + "\n"); hub.stdin.flush()
 
+# --- resources and prompts pass through the bridge, routed by uri / prefix
+rl, _ = rpc({"jsonrpc":"2.0","id":90,"method":"resources/list"})
+check([r["uri"] for r in rl["result"]["resources"]] == ["py://hello"], "resources/list aggregates the bridge's resources")
+rt, _ = rpc({"jsonrpc":"2.0","id":91,"method":"resources/templates/list"})
+check(rt["result"]["resourceTemplates"][0]["uriTemplate"] == "py://item/{id}", "resources/templates/list passes templates through")
+rr, _ = rpc({"jsonrpc":"2.0","id":92,"method":"resources/read","params":{"uri":"py://item/7"}})
+check(rr["result"]["contents"][0]["text"].startswith("resource:py://item/7") and "token=***" in rr["result"]["contents"][0]["text"], "resources/read routed by template prefix, DLP applied")
+rx, _ = rpc({"jsonrpc":"2.0","id":93,"method":"resources/read","params":{"uri":"nope://x"}})
+check(rx.get("error", {}).get("code") == -32002, "unknown resource -> -32002")
+pl, _ = rpc({"jsonrpc":"2.0","id":94,"method":"prompts/list"})
+check([p["name"] for p in pl["result"]["prompts"]] == ["py__greet"], "prompts/list carries the bridge prefix")
+pg, _ = rpc({"jsonrpc":"2.0","id":95,"method":"prompts/get","params":{"name":"py__greet","arguments":{"who":"hub"}}})
+check(pg["result"]["messages"][0]["content"]["text"] == "hi hub", "prompts/get strips the prefix and forwards arguments")
+
 # --- audit #1: a malformed notification must not kill the server
 hub.stdin.write('{"jsonrpc":"2.0","method":"notifications/cancelled","params":"oops"}\n'); hub.stdin.flush()
 pong, _ = rpc({"jsonrpc":"2.0","id":100,"method":"ping"})
@@ -234,6 +248,8 @@ rpc2({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"
 hub2.stdin.write(json.dumps({"jsonrpc":"2.0","method":"notifications/initialized"}) + "\n"); hub2.stdin.flush()
 t = rpc2({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"hub_status"}})["result"]["content"][0]["text"]
 check("toolcache=hits 1/miss 0" in t and "bridges=1 (0 running)" in t and "tools=8" in t, "second run: tools listed from cache, bridge process NOT started")
+rl2 = rpc2({"jsonrpc":"2.0","id":21,"method":"resources/list"})
+check([r["uri"] for r in rl2["result"]["resources"]] == ["py://hello"] and "resources=1+1 prompts=1" in t, "second run: resources and prompts served from the cache, no child needed")
 children = [l for l in subprocess.run(["ps","-ax","-o","command="], capture_output=True, text=True).stdout.splitlines() if ECHO in l and "--child-flag" in l and "--stdio" not in l]
 check(not children, "no echo_server child before the first bridged call")
 rn = rpc2({"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"mcp_execute_tool","arguments":{"toolName":"py__nuke","arguments":{}}}})
