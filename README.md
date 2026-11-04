@@ -179,7 +179,7 @@ tests/run.sh                        # unit tests, warning-free AOT publish, e2e 
 dotnet test tests/Hubris.Tests      # unit tests only
 ```
 
-98 xUnit tests and 68 end-to-end checks (`tests/e2e/control_test.py` drives a published binary with a Python
+131 xUnit tests and 75 end-to-end checks (`tests/e2e/control_test.py` drives a published binary with a Python
 stdio echo server as bridge, `tests/e2e/http_test.py` with a Python Streamable HTTP server). Both projects publish with `TreatWarningsAsErrors` and zero IL/AOT warnings.
 
 ## Layout
