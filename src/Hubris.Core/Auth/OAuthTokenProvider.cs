@@ -172,6 +172,23 @@ public sealed class OAuthTokenProvider
         }
     }
 
+    /// <summary>Seconds before expiry at which the keep-warm pass refreshes; generous so a 5-minute loop never misses it.</summary>
+    public const int KeepWarmWindowSec = 600;
+
+    /// <summary>
+    /// Refreshes a token that will expire soon even though nobody is calling the bridge, so a server that expires
+    /// refresh tokens after idle time keeps extending them. Returns true when a refresh was attempted.
+    /// </summary>
+    public async Task<bool> KeepWarmAsync(CancellationToken ct)
+    {
+        var tok = _store.Get(Provider);
+        if (tok is null || tok.RefreshToken is null || tok.ExpiresAt == 0) return false;
+        if (tok.ExpiresAt - _clock().ToUnixTimeSeconds() > KeepWarmWindowSec) return false;
+        string? fresh = await GetAccessTokenAsync(ct, forceRefresh: true).ConfigureAwait(false);
+        Log.Info($"oauth '{Bridge}': keep-warm refresh {(fresh is null ? "failed" : "done")}");
+        return true;
+    }
+
     public void Revoke()
     {
         _store.Delete(Provider);
@@ -260,6 +277,36 @@ public sealed class OAuthManager
     public bool TryGet(string bridge, out OAuthTokenProvider provider)
     {
         lock (_gate) return _providers.TryGetValue(bridge, out provider!);
+    }
+
+    /// <summary>Background pass over every provider; the shared store makes two hubs doing this harmless (the second sees the fresh token and skips).</summary>
+    public void StartKeepWarm(CancellationToken ct, TimeSpan? every = null)
+    {
+        var period = every ?? TimeSpan.FromMinutes(5);
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                while (!ct.IsCancellationRequested)
+                {
+                    await Task.Delay(period, ct).ConfigureAwait(false);
+                    await KeepWarmAllAsync(ct).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException) { }
+        }, CancellationToken.None);
+    }
+
+    public async Task KeepWarmAllAsync(CancellationToken ct)
+    {
+        OAuthTokenProvider[] providers;
+        lock (_gate) providers = _providers.Values.ToArray();
+        foreach (var p in providers)
+        {
+            try { await p.KeepWarmAsync(ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { Log.Warn($"oauth '{p.Bridge}': keep-warm failed: {ex.Message}"); }
+        }
     }
 
     public List<AuthInfo> Infos()

@@ -198,6 +198,24 @@ public class AuthTests : IDisposable
     }
 
     [Fact]
+    public async Task Keep_warm_refreshes_only_tokens_close_to_expiry()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var (provider, world, store) = Build(() => now);
+        store.Set("notion", new StoredToken { AccessToken = "A1", RefreshToken = "R1", ExpiresAt = now.ToUnixTimeSeconds() + 7200, TokenEndpoint = "https://as.test/token", ClientId = "cid-1", Resource = "https://mcp.test/mcp" });
+        Assert.False(await provider.KeepWarmAsync(CancellationToken.None)); // two hours left: nothing to do
+        Assert.Equal(0, world.Refreshes);
+
+        store.Set("notion", new StoredToken { AccessToken = "A1", RefreshToken = "R1", ExpiresAt = now.ToUnixTimeSeconds() + 300, TokenEndpoint = "https://as.test/token", ClientId = "cid-1", Resource = "https://mcp.test/mcp" });
+        Assert.True(await provider.KeepWarmAsync(CancellationToken.None));  // five minutes left, nobody calling: refreshed anyway
+        Assert.Equal(1, world.Refreshes);
+        Assert.Equal("A2", store.Get("notion")!.AccessToken);
+
+        store.Set("notion", new StoredToken { AccessToken = "A2", ExpiresAt = now.ToUnixTimeSeconds() + 60, TokenEndpoint = "https://as.test/token", ClientId = "cid-1" });
+        Assert.False(await provider.KeepWarmAsync(CancellationToken.None)); // no refresh token: nothing it can do
+    }
+
+    [Fact]
     public async Task Refresh_failure_without_a_valid_token_reports_expired()
     {
         var now = DateTimeOffset.UtcNow;

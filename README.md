@@ -56,7 +56,8 @@ client ──stdio──▶ Hubris ──stdio──▶ bridge 1 (npx …)
   account `vault`) holding every provider's token, read once per hub and updated in place so "Always Allow" sticks;
   the Credential Manager on Windows; a 0600 file under `~/.hubris/tokens` elsewhere.
   Tokens are never written to `config.json` or the cache database. A token inside 60 s of expiry is refreshed
-  before use, a 401 triggers one refresh and retry, and concurrent calls share one refresh. For a stdio bridge
+  before use, a 401 triggers one refresh and retry, concurrent calls share one refresh, and every 5 minutes an
+  idle hub refreshes any token within 10 minutes of expiry so refresh tokens with an idle timeout keep living. For a stdio bridge
   the token goes into the child's environment under `auth.env` right before the lazy spawn. The desktop app's
   Connections card shows the state per bridge with Connect / Disconnect; the same goes over the control socket
   as `oauth_start`, `oauth_revoke` and the `oauth_changed` event.

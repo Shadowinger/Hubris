@@ -131,6 +131,8 @@ if (!opts.NoControl)
     }
 }
 
+runtime.Auth.StartKeepWarm(shutdown.Token); // idle hubs still refresh before expiry, so sliding refresh-token windows keep sliding
+
 var transport = new StdioTransport();
 var router = new McpRouter(transport, registry, security, runtime, bridges, control);
 
