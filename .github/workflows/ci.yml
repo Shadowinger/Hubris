@@ -19,14 +19,20 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Unit tests
-        run: dotnet test tests/Hubris.Tests -c Release --nologo -v q
+        run: dotnet test tests/Hubris.Tests -c Release --nologo -v q --logger "console;verbosity=normal"
 
       - name: Publish server (Native AOT, zero warnings)
         shell: bash
         run: |
-          dotnet publish src/Hubris -c Release --nologo > publish.log 2>&1 || { cat publish.log; exit 1; }
+          set +e
+          dotnet publish src/Hubris -c Release --nologo > publish.log 2>&1
+          status=$?
+          set -e
+          tail -n 5 publish.log
+          [ "$status" -eq 0 ] || { cat publish.log; exit 1; }
           if grep -qE "warning|error" publish.log; then grep -E "warning|error" publish.log | sort -u; exit 1; fi
-          bin=$(ls src/Hubris/bin/Release/net10.0/*/publish/Hubris src/Hubris/bin/Release/net10.0/*/publish/Hubris.exe 2>/dev/null | head -1)
+          bin=$(find src/Hubris/bin -type f \( -name Hubris -o -name Hubris.exe \) -path '*publish*' | head -1)
+          if [ -z "$bin" ]; then echo "no published binary found:"; find src/Hubris/bin -maxdepth 5 | head -40; exit 1; fi
           echo "HUBRIS_BIN=$bin" >> "$GITHUB_ENV"
           "$bin" --version
 
@@ -41,7 +47,7 @@ jobs:
         shell: bash
         run: |
           export HUBRIS_HOME="$(mktemp -d)"
-          python3 -I tests/e2e/http_test.py "$HUBRIS_BIN"
+          python -I tests/e2e/http_test.py "$HUBRIS_BIN"
 
       - name: Build desktop
         run: dotnet build src/Hubris.Desktop -c Release --nologo

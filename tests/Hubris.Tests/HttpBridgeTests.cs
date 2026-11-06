@@ -188,14 +188,16 @@ public class HttpBridgeTests
 
         // The cache keeps them next to the tools, under the same hash and TTL.
         string dir = Directory.CreateTempSubdirectory("hubris-extras-").FullName;
-        using var cache = new ToolCacheStore(Path.Combine(dir, "t.db"), TimeSpan.FromHours(1));
-        cache.Open();
-        cache.PutExtras("api", bridge.ConfigHash, extras);
-        Assert.Equal("greet", cache.TryGetExtras("api", bridge.ConfigHash)!.Prompts[0]["name"]!.GetValue<string>());
-        Assert.Null(cache.TryGetExtras("api", "other-hash"));
-        cache.Invalidate("api");
-        Assert.Null(cache.TryGetExtras("api", bridge.ConfigHash));
-        Directory.Delete(dir, true);
+        using (var cache = new ToolCacheStore(Path.Combine(dir, "t.db"), TimeSpan.FromHours(1)))
+        {
+            cache.Open();
+            cache.PutExtras("api", bridge.ConfigHash, extras);
+            Assert.Equal("greet", cache.TryGetExtras("api", bridge.ConfigHash)!.Prompts[0]["name"]!.GetValue<string>());
+            Assert.Null(cache.TryGetExtras("api", "other-hash"));
+            cache.Invalidate("api");
+            Assert.Null(cache.TryGetExtras("api", bridge.ConfigHash));
+        }
+        Directory.Delete(dir, true); // Windows refuses while the database is open
     }
 
     [Fact]
@@ -251,7 +253,7 @@ public class HttpBridgeTests
     public async Task Cached_remote_bridge_is_registered_without_a_single_request()
     {
         string dir = Directory.CreateTempSubdirectory("hubris-http-").FullName;
-        using var cache = new ToolCacheStore(Path.Combine(dir, "tools.db"), TimeSpan.FromHours(1));
+        var cache = new ToolCacheStore(Path.Combine(dir, "tools.db"), TimeSpan.FromHours(1));
         cache.Open();
         var spec = Remote();
         cache.Put(spec.Name, spec.ConfigHash(), [new ToolDefinition { Name = "peek", InputSchema = new JsonObject { ["type"] = "object" } }], 10);
@@ -266,6 +268,7 @@ public class HttpBridgeTests
         Assert.True(registry.TryGet("api__peek", out _));
         Assert.Equal(1, cache.Hits);
         await bridge.DisposeAsync();
+        cache.Dispose();
         Directory.Delete(dir, true);
     }
 

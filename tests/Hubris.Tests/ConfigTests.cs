@@ -40,7 +40,7 @@ public class ConfigTests : IDisposable
     [Fact]
     public void Scanner_finds_clients_and_skips_hubris_entries()
     {
-        Write(Path.GetRelativePath(_home, ClientConfigScanner.ClaudeDesktopPath(_home)), """
+        Write(Path.GetRelativePath(_home, ClientConfigScanner.ClaudeDesktopPath(_home, _home)), """
             {
               // JSONC is fine
               "mcpServers": {
