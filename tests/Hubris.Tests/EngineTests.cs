@@ -240,6 +240,41 @@ public class FsReadHeadTests
     }
 }
 
+public class AutoLockTests
+{
+    [Fact]
+    public void Idle_unlocked_tools_are_locked_and_used_ones_stay()
+    {
+        var reg = new ToolRegistry(compactContext: true);
+        reg.Register(new FakeTool("a", ToolRiskLevel.ReadOnly, pinned: false));
+        reg.Register(new FakeTool("b", ToolRiskLevel.ReadOnly, pinned: false));
+        reg.Register(new FakeTool("p", ToolRiskLevel.ReadOnly, pinned: true));
+        var t0 = DateTime.UtcNow;
+        Assert.True(reg.Unlock("a"));
+        Assert.True(reg.Unlock("b"));
+        Assert.Empty(reg.LockIdle(TimeSpan.FromMinutes(10), t0.AddMinutes(5)));   // nothing idle yet
+        reg.Touch("a", t0.AddMinutes(10));                                        // a is in use
+        var locked = reg.LockIdle(TimeSpan.FromMinutes(10), t0.AddMinutes(12));
+        Assert.Equal(["b"], locked);
+        Assert.True(reg.IsUnlocked("a"));
+        Assert.False(reg.IsUnlocked("b"));
+        Assert.True(reg.IsVisible(reg.TryGet("p", out var p) ? p : throw new Exception()));
+    }
+
+    [Fact]
+    public void Auto_lock_flag_parses_and_rejects_nan()
+    {
+        Assert.True(CliOptions.TryParse(["--auto-lock=30"], out var o, out _));
+        Assert.Equal(30, o.AutoLockSec);
+        Assert.Contains("--auto-lock=30", o.ServerArgs());
+        Assert.True(CliOptions.TryParse(["--auto-lock=0"], out var off, out _));
+        Assert.Equal(0, off.AutoLockSec);
+        Assert.False(CliOptions.TryParse(["--auto-lock=NaN"], out _, out var err));
+        Assert.Contains("auto-lock", err);
+        Assert.False(CliOptions.TryParse(["--cache-ttl=NaN"], out _, out _));
+    }
+}
+
 public class CliOptionsTests
 {
     [Fact]

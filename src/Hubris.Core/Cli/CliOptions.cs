@@ -39,6 +39,8 @@ public sealed class CliOptions
     public bool NoCache { get; private set; }
     public double CacheTtlHours { get; private set; } = 24;
     public double ApprovalTimeoutSec { get; private set; } = 120;
+    /// <summary>Seconds an unlocked tool may sit unused before it is hidden again; 0 keeps everything unlocked.</summary>
+    public double AutoLockSec { get; private set; } = 600;
     public List<BridgeSpec> Bridges { get; } = new();
 
     /// <summary>Arguments to persist in client configs so the installed server matches the current flags.</summary>
@@ -53,6 +55,7 @@ public sealed class CliOptions
         if (NoCache) list.Add("--no-cache");
         if (CacheTtlHours != 24) list.Add($"--cache-ttl={CacheTtlHours.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
         if (ApprovalTimeoutSec != 120) list.Add($"--approval-timeout={ApprovalTimeoutSec.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+        if (AutoLockSec != 600) list.Add($"--auto-lock={AutoLockSec.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
         foreach (var b in Bridges)
         {
             if (b.IsRemote)
@@ -106,15 +109,23 @@ public sealed class CliOptions
 
             if (a.StartsWith("--cache-ttl=", StringComparison.Ordinal))
             {
-                if (!double.TryParse(a[12..], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var hours) || hours <= 0 || hours > 24 * 365)
+                if (!double.TryParse(a[12..], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var hours) || !double.IsFinite(hours) || hours <= 0 || hours > 24 * 365)
                 { error = "--cache-ttl must be hours in (0, 8760]"; return false; }
                 options.CacheTtlHours = hours;
                 continue;
             }
 
+            if (a.StartsWith("--auto-lock=", StringComparison.Ordinal))
+            {
+                if (!double.TryParse(a[12..], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var secs) || !double.IsFinite(secs) || secs < 0 || secs > 86400)
+                { error = "--auto-lock must be 0 (off) or 1..86400 seconds"; return false; }
+                options.AutoLockSec = secs;
+                continue;
+            }
+
             if (a.StartsWith("--approval-timeout=", StringComparison.Ordinal))
             {
-                if (!double.TryParse(a[19..], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var secs) || secs < 1 || secs > 3600)
+                if (!double.TryParse(a[19..], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var secs) || !double.IsFinite(secs) || secs < 1 || secs > 3600)
                 { error = "--approval-timeout must be 1..3600 seconds"; return false; }
                 options.ApprovalTimeoutSec = secs;
                 continue;
@@ -172,7 +183,7 @@ public sealed class CliOptions
     private static readonly string[] OwnOptions =
     [
         "--stdio", "--compact", "--verbose", "-v", "--install-vscode", "--install-claude", "--help", "-h",
-        "--version", "--no-control", "--control-trust-all", "--no-cache", "--cache-ttl", "--mode", "--bridge", "--approval-timeout",
+        "--version", "--no-control", "--control-trust-all", "--no-cache", "--cache-ttl", "--mode", "--bridge", "--approval-timeout", "--auto-lock",
     ];
 
     public static bool IsOwnOption(string arg)
@@ -204,6 +215,7 @@ public sealed class CliOptions
             "  --no-cache         always spawn bridges at startup instead of using the SQLite tool cache\n" +
             "  --cache-ttl=H      hours a cached bridge tool list stays valid (default 24)\n" +
             "  --approval-timeout=S  seconds a blocked call waits for Approve/Deny in the UI (default 120)\n" +
+            "  --auto-lock=S      hide an unlocked tool again after S seconds without a call (default 600, 0 = never)\n" +
             "  --install-vscode   write .vscode/mcp.json in the current directory\n" +
             "  --install-claude   register in Claude Desktop's claude_desktop_config.json\n" +
             "  --version, --help\n");

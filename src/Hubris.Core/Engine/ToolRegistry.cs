@@ -37,7 +37,8 @@ public sealed class HubRuntime
 public sealed class ToolRegistry
 {
     private readonly ConcurrentDictionary<string, IMcpTool> _tools = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, byte> _unlocked = new(StringComparer.Ordinal);
+    /// <summary>Unlocked tool name → when it was last unlocked or called (UTC ticks), so idle ones can be locked again.</summary>
+    private readonly ConcurrentDictionary<string, long> _unlocked = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, int> _tokens = new(StringComparer.Ordinal);
 
     public ToolRegistry(bool compactContext)
@@ -104,7 +105,24 @@ public sealed class ToolRegistry
     public bool TryGet(string name, out IMcpTool tool) => _tools.TryGetValue(name, out tool!);
 
     /// <summary>Marks an on-demand tool as unlocked for the rest of the session. Returns true if newly unlocked.</summary>
-    public bool Unlock(string name) => _tools.ContainsKey(name) && _unlocked.TryAdd(name, 0);
+    public bool Unlock(string name) => _tools.ContainsKey(name) && _unlocked.TryAdd(name, DateTime.UtcNow.Ticks);
+
+    /// <summary>A call to an unlocked tool keeps it unlocked: the idle clock restarts.</summary>
+    public void Touch(string name, DateTime? now = null)
+    {
+        if (_unlocked.ContainsKey(name)) _unlocked[name] = (now ?? DateTime.UtcNow).Ticks;
+    }
+
+    /// <summary>Locks every tool that was neither unlocked nor called within <paramref name="idle"/>. Returns the names locked.</summary>
+    public List<string> LockIdle(TimeSpan idle, DateTime? now = null)
+    {
+        long cutoff = (now ?? DateTime.UtcNow).Ticks - idle.Ticks;
+        var locked = new List<string>();
+        foreach (var kv in _unlocked)
+            if (kv.Value < cutoff && _unlocked.TryRemove(kv.Key, out _)) locked.Add(kv.Key);
+        locked.Sort(StringComparer.Ordinal);
+        return locked;
+    }
 
     public bool IsUnlocked(string name) => _unlocked.ContainsKey(name);
     public int UnlockedCount => _unlocked.Count;

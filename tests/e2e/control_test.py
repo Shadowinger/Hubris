@@ -336,5 +336,24 @@ while True:
 check(st4["mode"] == "Safe", "mode unchanged after the refused command")
 f4.close(); s4.close(); hub4.stdin.close(); hub4.wait(timeout=30)
 
+# ===================================================================== fifth run: idle unlocked tools are hidden again
+hub5 = subprocess.Popen([BIN, "--stdio", "--compact", "--no-control", "--auto-lock=2"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+notes5 = []
+def rpc5(obj):
+    hub5.stdin.write(json.dumps(obj) + "\n"); hub5.stdin.flush()
+    while True:
+        m = json.loads(hub5.stdout.readline())
+        if "method" in m: notes5.append(m["method"]); continue
+        return m
+rpc5({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","clientInfo":{"name":"ctl-test-5","version":"1"}}})
+hub5.stdin.write(json.dumps({"jsonrpc":"2.0","method":"notifications/initialized"}) + "\n"); hub5.stdin.flush()
+rpc5({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"mcp_search_tools","arguments":{"query":"git"}}})
+names5 = [t["name"] for t in rpc5({"jsonrpc":"2.0","id":3,"method":"tools/list"})["result"]["tools"]]
+check("git_smart_status" in names5, "search unlocked git_smart_status")
+time.sleep(3.5)
+names5b = [t["name"] for t in rpc5({"jsonrpc":"2.0","id":4,"method":"tools/list"})["result"]["tools"]]
+check("git_smart_status" not in names5b and notes5.count("notifications/tools/list_changed") >= 2, f"auto-lock hid it again after 2 s idle and sent list_changed ({notes5.count('notifications/tools/list_changed')} notifications)")
+hub5.stdin.close(); hub5.wait(timeout=30)
+
 print("\n--- hub stderr (tail):"); print("\n".join(stderr_lines[-14:]))
 sys.exit(0 if ok else 1)

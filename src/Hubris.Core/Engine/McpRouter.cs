@@ -395,6 +395,7 @@ public sealed class McpRouter
         if (result.Failed && outcome == "ok") outcome = "error";
         _control?.EmitToolCall(callId, tool.Name, tool.RiskLevel, outcome, ms, args, result);
 
+        _registry.Touch(tool.Name); // an unlocked tool in use stays unlocked
         if (tool is IUnlockingTool && _registry.UnlockedCount != unlockedBefore)
         {
             await SendToolsListChangedAsync().ConfigureAwait(false);
@@ -402,6 +403,33 @@ public sealed class McpRouter
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Compact context only pays off while the unlocked set stays small; tools a task needed an hour ago should not
+    /// ride along in every later request. Checks a few times per idle period, locks what went quiet, tells the client.
+    /// </summary>
+    public void StartAutoLock(TimeSpan idle)
+    {
+        if (idle <= TimeSpan.Zero) return;
+        var every = TimeSpan.FromSeconds(Math.Clamp(idle.TotalSeconds / 4, 1, 60));
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                while (!_shutdown.IsCancellationRequested)
+                {
+                    await Task.Delay(every, _shutdown.Token).ConfigureAwait(false);
+                    var locked = _registry.LockIdle(idle);
+                    if (locked.Count == 0) continue;
+                    Log.Info($"auto-lock: {string.Join(", ", locked)} idle for {idle.TotalSeconds:0}s, hidden again");
+                    if (_initialized) await SendToolsListChangedAsync().ConfigureAwait(false);
+                    _control?.EmitToolsChanged();
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { Log.Warn($"auto-lock loop: {ex.Message}"); }
+        }, CancellationToken.None);
     }
 
     private ValueTask SendToolsListChangedAsync()

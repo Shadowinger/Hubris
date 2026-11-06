@@ -41,7 +41,9 @@ client ──stdio──▶ Hubris ──stdio──▶ bridge 1 (npx …)
 - **Compact context.** With `--compact` the model sees three tools: `hub_status`, `mcp_search_tools`
   and `mcp_execute_tool`. It searches by keyword, the matches get unlocked (`notifications/tools/list_changed`),
   and it calls them directly or through `mcp_execute_tool {toolName, arguments}`. `Lock` in the desktop app
-  puts them away again.
+  puts them away again, and so does the hub itself: an unlocked tool that has not been called for `--auto-lock`
+  seconds (default 600) is hidden again with a `tools/list_changed`, so the context cost of a long session drifts
+  back to the three core tools instead of growing with every search.
 - **Resources and prompts.** A bridge's resources, resource templates and prompts are passed through: `resources/list`
   and `resources/templates/list` merge every bridge's lists, `resources/read` is routed to the bridge that listed the
   URI (or whose template prefix matches) and its text goes through DLP, prompts carry the bridge prefix
@@ -140,8 +142,8 @@ Bridged tools show up as `fs__read_file`, `gh__create_issue`, `linear__create_is
 ## Usage
 
 ```
-Hubris --stdio [--compact] [--mode=safe|bypass] [--approval-timeout=120] [--cache-ttl=24h]
-       [--no-cache] [--no-control] [--verbose]
+Hubris --stdio [--compact] [--mode=safe|bypass] [--approval-timeout=120] [--auto-lock=600] [--cache-ttl=24h]
+       [--no-cache] [--no-control] [--control-trust-all] [--verbose]
        [--bridge=<name>:<command> [args…]]… [--bridge=<name>:<url> ["Header: value"…]]…
 ```
 
@@ -181,7 +183,7 @@ tests/run.sh                        # unit tests, warning-free AOT publish, e2e 
 dotnet test tests/Hubris.Tests      # unit tests only
 ```
 
-131 xUnit tests and 75 end-to-end checks (`tests/e2e/control_test.py` drives a published binary with a Python
+133 xUnit tests and 77 end-to-end checks (`tests/e2e/control_test.py` drives a published binary with a Python
 stdio echo server as bridge, `tests/e2e/http_test.py` with a Python Streamable HTTP server). Both projects publish with `TreatWarningsAsErrors` and zero IL/AOT warnings.
 
 ## Layout

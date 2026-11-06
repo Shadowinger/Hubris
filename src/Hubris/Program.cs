@@ -135,6 +135,7 @@ runtime.Auth.StartKeepWarm(shutdown.Token); // idle hubs still refresh before ex
 
 var transport = new StdioTransport();
 var router = new McpRouter(transport, registry, security, runtime, bridges, control);
+router.StartAutoLock(TimeSpan.FromSeconds(opts.AutoLockSec));
 
 Log.Info($"ready mode={ModeNames.ToText(opts.Mode)} compact={(opts.Compact ? "on" : "off")} tools={registry.Count} bridges={bridges.Count} startup={uptime.Elapsed.TotalMilliseconds:0.0}ms");
 
