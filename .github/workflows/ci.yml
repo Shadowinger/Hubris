@@ -1,0 +1,47 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Unit tests
+        run: dotnet test tests/Hubris.Tests -c Release --nologo -v q
+
+      - name: Publish server (Native AOT, zero warnings)
+        shell: bash
+        run: |
+          dotnet publish src/Hubris -c Release --nologo > publish.log 2>&1 || { cat publish.log; exit 1; }
+          if grep -qE "warning|error" publish.log; then grep -E "warning|error" publish.log | sort -u; exit 1; fi
+          bin=$(ls src/Hubris/bin/Release/net10.0/*/publish/Hubris src/Hubris/bin/Release/net10.0/*/publish/Hubris.exe 2>/dev/null | head -1)
+          echo "HUBRIS_BIN=$bin" >> "$GITHUB_ENV"
+          "$bin" --version
+
+      - name: E2E over stdio and the control socket
+        if: runner.os != 'Windows'   # the Python client uses AF_UNIX, which CPython lacks on Windows
+        shell: bash
+        run: |
+          export HUBRIS_HOME="$(mktemp -d)"
+          python3 -I tests/e2e/control_test.py "$HUBRIS_BIN"
+
+      - name: E2E over HTTP
+        shell: bash
+        run: |
+          export HUBRIS_HOME="$(mktemp -d)"
+          python3 -I tests/e2e/http_test.py "$HUBRIS_BIN"
+
+      - name: Build desktop
+        run: dotnet build src/Hubris.Desktop -c Release --nologo
