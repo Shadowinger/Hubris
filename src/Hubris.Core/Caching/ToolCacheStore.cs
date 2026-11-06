@@ -34,7 +34,7 @@ public sealed class ToolCacheStore : IDisposable
     public void Open()
     {
         Directory.CreateDirectory(System.IO.Path.GetDirectoryName(_path)!);
-        var db = new SqliteConnection($"Data Source={_path}");
+        var db = new SqliteConnection($"Data Source={_path};Pooling=False"); // one connection per hub; pooling only keeps the file locked after Dispose (Windows)
         db.Open();
         Exec(db, "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=2000;");
         Exec(db, """
