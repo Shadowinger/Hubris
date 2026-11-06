@@ -1,5 +1,7 @@
 # Hubris
 
+[![ci](https://github.com/Shadowinger/Hubris/actions/workflows/ci.yml/badge.svg)](https://github.com/Shadowinger/Hubris/actions/workflows/ci.yml)
+
 MCP gateway. One stdio server that sits between an MCP client (Claude Desktop, Claude Code, Cursor, VS Code)
 and all the MCP servers you actually use, local child processes and remote (HTTP) servers alike. It caches
 their tool definitions so nothing has to be spawned or connected at startup, keeps most of their tools out of
@@ -196,5 +198,6 @@ brand/               icon, mark, wordmark
 
 ## Status
 
-Works on macOS. Paths for the client configs on Windows and Linux are in the code but not tested there.
+CI runs the unit tests, the warning-free Native AOT publish and the e2e suites on macOS, Ubuntu and Windows (the
+control-socket suite skips Windows, where CPython has no AF_UNIX). The desktop app is used on macOS only.
 Version 1.3.0. MIT license.
