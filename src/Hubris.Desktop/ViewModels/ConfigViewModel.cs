@@ -54,7 +54,8 @@ public sealed class ConfigViewModel : ObservableObject
     }
 
     /// <summary>Installed by MainViewModel: asks every connected hub to pick up config.json; returns how many were told.</summary>
-    public Func<Task<int>>? ReloadRunningHubs { get; set; }
+    /// <summary>Asks every running hub to reload config.json and, when a bridge name is given, one of them to open its sign-in. Returns the hub count.</summary>
+    public Func<string?, Task<int>>? ReloadRunningHubs { get; set; }
 
     public ObservableCollection<DetectedClientRow> Clients { get; } = new();
     private string _projectRoot = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
@@ -181,9 +182,9 @@ public sealed class ConfigViewModel : ObservableObject
         try { HubrisConfigFile.Save(cfg); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { LastResult = $"✗ {ex.Message}"; AppendLog(LastResult); return false; }
         LoadBridges();
-        LastResult = $"✓ {s.Name} saved as bridge '{name}'. {(s.Auth == "oauth" ? "Press Connect on the hub dashboard to sign in." : "Running hubs pick it up on reload.")}";
+        LastResult = $"✓ {s.Name} saved as bridge '{name}'.";
         AppendLog(LastResult);
-        _ = NotifyHubsAsync();
+        _ = NotifyHubsAsync(s.Auth == "oauth" ? name : null, s.Name);
         return true;
     }
 
@@ -273,11 +274,19 @@ public sealed class ConfigViewModel : ObservableObject
         if (hadProjects) ScanProjects();
     }
 
-    private async Task NotifyHubsAsync()
+    private async Task NotifyHubsAsync(string? signIn = null, string? title = null)
     {
         if (ReloadRunningHubs is null) return;
-        int n = await ReloadRunningHubs();
-        if (n > 0) Avalonia.Threading.Dispatcher.UIThread.Post(() => AppendLog($"asked {n} running hub(s) to reload config.json"));
+        int n = await ReloadRunningHubs(signIn);
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            if (n > 0) AppendLog($"asked {n} running hub(s) to reload config.json");
+            if (signIn is null) return;
+            LastResult = n > 0
+                ? $"✓ {title} added. Finish the sign-in in the browser tab that just opened."
+                : $"✓ {title} added. No hub is running, so the sign-in could not open: start your MCP client, then press Connect on the hub dashboard.";
+            AppendLog(LastResult);
+        });
     }
 
     /// <summary>Installed by the view: opens a folder picker and returns the chosen path.</summary>

@@ -274,6 +274,11 @@ st2 = None
 s2.sendall((json.dumps({"type":"get_status","reqId":2}) + "\n").encode()); st2 = recv2("status")
 check(ack2["ok"] and st2["cacheSize"] == 1 and st2["bridgesRunning"] == 1, f"clear_cache re-listed and re-cached the bridge (entries={st2['cacheSize']})")
 lst2 = rpc2({"jsonrpc":"2.0","id":5,"method":"tools/list"})
+# clear_cache for one bridge (what the desktop sends to the other hubs after a sign-in), and for a name nobody has
+s2.sendall((json.dumps({"type":"clear_cache","reqId":3,"bridge":"py"}) + "\n").encode()); ack3 = recv2("ack")
+s2.sendall((json.dumps({"type":"clear_cache","reqId":4,"bridge":"nope"}) + "\n").encode()); ack4 = recv2("ack")
+s2.sendall((json.dumps({"type":"get_status","reqId":5}) + "\n").encode()); st3 = recv2("status")
+check(ack3["ok"] and ack4["ok"] and st3["cacheSize"] == 1 and st3["bridgesRunning"] == 1, "clear_cache with a bridge name re-lists that bridge and ignores an unknown one")
 f2.close(); s2.close()
 hub2.stdin.close(); hub2.wait(timeout=30)
 check(hub2.returncode == 0, "second hub exited cleanly on EOF")

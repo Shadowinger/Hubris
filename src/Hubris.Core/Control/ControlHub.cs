@@ -356,7 +356,10 @@ public sealed class ControlHub : IAsyncDisposable
                     break;
 
                 case ControlTypes.ClearCache:
-                    await RefreshBridgesAsync().ConfigureAwait(false);
+                    if (string.IsNullOrEmpty(cmd.Bridge)) { await RefreshBridgesAsync().ConfigureAwait(false); break; }
+                    // One bridge: the desktop sends this to the other hubs after a sign-in on one of them.
+                    foreach (var b in _rt.Bridges)
+                        if (b.Name == cmd.Bridge) await RefreshBridgeAsync(b).ConfigureAwait(false);
                     break;
 
                 case ControlTypes.ReloadConfig:

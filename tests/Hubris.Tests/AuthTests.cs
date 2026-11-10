@@ -12,7 +12,7 @@ namespace Hubris.Tests;
 internal sealed class FakeAuthWorld : HttpMessageHandler
 {
     public string? Challenge, RedirectUri, State;
-    public int Registrations, Exchanges, Refreshes, ResourceCalls;
+    public int Registrations, Exchanges, Refreshes, ResourceCalls, TokenCalls, RefreshDelayMs;
     public string ValidToken = "A1";
     public bool RejectEverything;
     public bool BrokenRegistration;
@@ -35,6 +35,7 @@ internal sealed class FakeAuthWorld : HttpMessageHandler
         }
         if (host == "as.test" && path == "/token")
         {
+            TokenCalls++;
             if (RejectEverything) return Json("""{"error":"invalid_grant","error_description":"revoked"}""", HttpStatusCode.BadRequest);
             var form = OAuthPkceFlow.ParseQuery("?" + await req.Content!.ReadAsStringAsync(ct));
             Assert.Equal("https://mcp.test/mcp", form["resource"]);
@@ -50,6 +51,7 @@ internal sealed class FakeAuthWorld : HttpMessageHandler
             }
             Refreshes++;
             Assert.Equal("R1", form["refresh_token"]);
+            if (RefreshDelayMs > 0) await Task.Delay(RefreshDelayMs, ct);
             ValidToken = "A2";
             return Json("""{"access_token":"A2","token_type":"Bearer","expires_in":3600}""");
         }
@@ -85,6 +87,16 @@ internal sealed class FakeAuthWorld : HttpMessageHandler
 
     private static HttpResponseMessage Json(string body, HttpStatusCode code = HttpStatusCode.OK)
         => new(code) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
+}
+
+/// <summary>A keychain that would need a dialog: every access fails the way the macOS store does with interaction off.</summary>
+internal sealed class RefusingStore : ISecureTokenStore
+{
+    private static IOException No() => new("keychain read failed (OSStatus -25293)");
+    public StoredToken? Get(string account) => throw No();
+    public StoredToken? Reload(string account) => throw No();
+    public void Set(string account, StoredToken token) => throw No();
+    public void Delete(string account) => throw No();
 }
 
 internal sealed class CountingStore : ISecureTokenStore
@@ -282,11 +294,85 @@ public class AuthTests : IDisposable
     }
 
     [Fact]
+    public async Task Two_hubs_refreshing_at_once_spend_the_refresh_token_once()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var world = new FakeAuthWorld { RefreshDelayMs = 300 };
+        string dir = Path.Combine(_dir, "two-hubs");
+        new FileTokenStore(dir).Set("notion", new StoredToken { AccessToken = "A1", RefreshToken = "R1", ExpiresAt = now.ToUnixTimeSeconds() + 300, TokenEndpoint = "https://as.test/token", ClientId = "cid-1", Resource = "https://mcp.test/mcp" });
+        // Two hub processes: each has its own memory cache and in-process gate, only the store and the lock file are shared.
+        OAuthTokenProvider Hub() => new(Remote.Name, Remote.Auth!, Remote.Url, new CachingTokenStore(new FileTokenStore(dir)), new HttpClient(world), world.Browser, () => now, lockDir: dir);
+        var (a, b) = (Hub(), Hub());
+        Assert.Equal("A1", (await a.GetAccessTokenAsync(CancellationToken.None))!); // both have A1 in memory
+        Assert.Equal("A1", (await b.GetAccessTokenAsync(CancellationToken.None))!);
+
+        await Task.WhenAll(a.KeepWarmAsync(CancellationToken.None), b.KeepWarmAsync(CancellationToken.None)); // same 5-minute tick
+        Assert.Equal(1, world.Refreshes); // the one that waited took the rotated token; a second use of R1 would get the grant revoked
+        Assert.Equal("A2", await a.GetAccessTokenAsync(CancellationToken.None));
+        Assert.Equal("A2", await b.GetAccessTokenAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Refresh_token_the_server_rejects_is_forgotten_so_nothing_retries()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var (provider, world, store) = Build(() => now);
+        store.Set("notion", new StoredToken { AccessToken = "A1", RefreshToken = "R1", ExpiresAt = now.ToUnixTimeSeconds() + 300, TokenEndpoint = "https://as.test/token", ClientId = "cid-1", Resource = "https://mcp.test/mcp" });
+        world.RejectEverything = true; // invalid_grant
+        Assert.True(await provider.KeepWarmAsync(CancellationToken.None));
+        Assert.Null(store.Get("notion")!.RefreshToken);
+        Assert.Contains("press Connect", provider.LastError);
+        Assert.Equal("A1", await provider.GetAccessTokenAsync(CancellationToken.None)); // the access token still has its five minutes
+        Assert.False(await provider.KeepWarmAsync(CancellationToken.None));             // the dead refresh token is not sent again
+        Assert.Equal(1, world.TokenCalls);
+    }
+
+    [Fact]
+    public async Task Hub_that_saw_no_token_picks_up_a_sign_in_made_by_another_hub()
+    {
+        string dir = Path.Combine(_dir, "late");
+        var world = new FakeAuthWorld();
+        var mine = new OAuthTokenProvider(Remote.Name, Remote.Auth!, Remote.Url, new CachingTokenStore(new FileTokenStore(dir)), new HttpClient(world), world.Browser);
+        Assert.Null(await mine.GetAccessTokenAsync(CancellationToken.None)); // "none" is now in the memory cache
+        new FileTokenStore(dir).Set("notion", new StoredToken { AccessToken = "A1", TokenEndpoint = "https://as.test/token", ClientId = "cid-1" }); // the other hub's login
+        Assert.Equal("A1", await mine.GetAccessTokenAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public void File_copy_wins_over_the_os_store_and_writes_stay_with_it()
+    {
+        static StoredToken T(string a) => new() { AccessToken = a, TokenEndpoint = "e", ClientId = "c" };
+        var os = new CountingStore();
+        var file = new FileTokenStore(Path.Combine(_dir, "fb"));
+        var store = new FallbackTokenStore(os, file);
+        store.Set("x", T("os-1"));
+        Assert.Null(file.Get("x")); // the OS store took it: no file
+        Assert.Equal("os-1", store.Get("x")!.AccessToken);
+
+        file.Set("x", T("file-2")); // a hub the OS store refused wrote the newer token here
+        Assert.Equal("file-2", store.Reload("x")!.AccessToken);
+        store.Set("x", T("file-3"));
+        Assert.Equal("file-3", file.Get("x")!.AccessToken);
+        Assert.Equal(1, os.Sets); // not split over two stores again
+
+        var refused = new FallbackTokenStore(new RefusingStore(), new FileTokenStore(Path.Combine(_dir, "fb2")));
+        Assert.Null(refused.Get("y"));
+        refused.Set("y", T("f"));
+        Assert.Equal("f", refused.Get("y")!.AccessToken);
+        refused.Delete("y");
+        Assert.Null(refused.Get("y"));
+    }
+
+    [Fact]
     public void Os_secret_store_round_trips_a_token()
     {
         if (!OperatingSystem.IsMacOS() && !OperatingSystem.IsWindows()) return; // Linux has the file store only
         ISecureTokenStore store = OperatingSystem.IsMacOS() ? new MacOsKeychainStore() : new WindowsCredentialStore();
         string account = "hubris-test-" + Environment.ProcessId;
+        // The store never shows the keychain dialog. Where the vault item already exists and belongs to another binary
+        // (a developer machine with a real hub), this process is refused and there is nothing to round-trip.
+        try { store.Get(account); }
+        catch (IOException ex) when (OperatingSystem.IsMacOS() && (ex.Message.Contains("-25293") || ex.Message.Contains("-25308"))) { return; } // errSecAuthFailed / errSecInteractionNotAllowed
         try
         {
             Assert.Null(store.Get(account));

@@ -22,11 +22,14 @@ public sealed class OAuthTokenProvider
     private readonly Action<string> _openBrowser;
     private readonly Func<DateTimeOffset> _clock;
     private readonly ProviderGate _gate;
+    private readonly string? _lockDir;
 
+    /// <param name="lockDir">Directory for the per-provider lock file that keeps two hubs from spending one refresh token; null = this process only.</param>
     public OAuthTokenProvider(string bridge, OAuthSpec spec, string? resourceUrl, ISecureTokenStore store, HttpClient http,
-                              Action<string>? openBrowser = null, Func<DateTimeOffset>? clock = null, ProviderGate? gate = null)
+                              Action<string>? openBrowser = null, Func<DateTimeOffset>? clock = null, ProviderGate? gate = null, string? lockDir = null)
     {
         _gate = gate ?? new ProviderGate();
+        _lockDir = lockDir;
         Bridge = bridge;
         _spec = spec;
         _resourceUrl = resourceUrl;
@@ -64,16 +67,19 @@ public sealed class OAuthTokenProvider
         await _gate.Lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var tok = _store.Get(Provider);
+            var tok = _store.Get(Provider) ?? _store.Reload(Provider); // null in memory: another hub may have signed in since
             if (tok is null) { SetState("none"); return null; }
             bool fresh = Fresh(tok);
             if (fresh && !forceRefresh) { SetState("connected"); return tok.AccessToken; }
-            // Another hub may have refreshed this provider already: read past the memory copy before spending the refresh token.
+            // Servers rotate refresh tokens and revoke the whole grant when one is used twice, so only one hub may
+            // refresh at a time, and the one that waited takes the winner's token instead of refreshing again.
+            using var crossProcess = await LockAcrossProcessesAsync(ct).ConfigureAwait(false);
             if (_store.Reload(Provider) is { } latest)
             {
+                bool rotated = latest.AccessToken != tok.AccessToken;
                 tok = latest;
                 fresh = Fresh(tok);
-                if (fresh && !forceRefresh) { SetState("connected"); return tok.AccessToken; }
+                if (fresh && (rotated || !forceRefresh)) { SetState("connected"); return tok.AccessToken; }
             }
             if (tok.RefreshToken is null)
             {
@@ -96,6 +102,13 @@ public sealed class OAuthTokenProvider
             {
                 LastError = ex.Message;
                 Log.Warn($"oauth '{Bridge}': refresh failed: {ex.Message}");
+                if (ex is OAuthException { Error: "invalid_grant" })
+                {
+                    // The server will never accept this refresh token again: forget it, so nothing retries until the user signs in.
+                    tok.RefreshToken = null;
+                    _store.Set(Provider, tok);
+                    LastError = ex.Message + "; press Connect to sign in again";
+                }
                 SetState(fresh ? "connected" : "expired");
                 return fresh ? tok.AccessToken : null;
             }
@@ -104,6 +117,30 @@ public sealed class OAuthTokenProvider
         {
             _gate.Lock.Release();
         }
+    }
+
+    /// <summary>Exclusive lock file per provider, held for one refresh. After 40 s (longer than a refresh can take) we go on without it.</summary>
+    private async Task<IDisposable?> LockAcrossProcessesAsync(CancellationToken ct)
+    {
+        if (_lockDir is null) return null;
+        string path = Path.Combine(_lockDir, string.Concat(Provider.Select(c => char.IsLetterOrDigit(c) || c is '-' or '_' or '.' ? c : '_')) + ".lock");
+        try
+        {
+            if (OperatingSystem.IsWindows()) Directory.CreateDirectory(_lockDir);
+            else Directory.CreateDirectory(_lockDir, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute); // same mode the token files' directory gets
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+        for (int attempt = 0; attempt < 400; attempt++)
+        {
+            try
+            {
+                return new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            }
+            catch (IOException) { await Task.Delay(100, ct).ConfigureAwait(false); } // held by another hub
+            catch (UnauthorizedAccessException) { return null; }
+        }
+        Log.Warn($"oauth '{Bridge}': token lock {path} stayed busy; refreshing without it");
+        return null;
     }
 
     /// <summary>Discovery → (registration →) browser → loopback redirect → code exchange → store.</summary>
@@ -250,8 +287,11 @@ public sealed class OAuthManager
     private readonly Dictionary<string, ProviderGate> _gates = new(StringComparer.Ordinal);
     private readonly object _gate = new();
 
-    public OAuthManager(ISecureTokenStore store, HttpClient? http = null)
+    private readonly string? _lockDir;
+
+    public OAuthManager(ISecureTokenStore store, HttpClient? http = null, string? lockDir = null)
     {
+        _lockDir = lockDir;
         _store = store;
         _http = http ?? new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
     }
@@ -267,7 +307,7 @@ public sealed class OAuthManager
             if (_providers.TryGetValue(spec.Name, out var p)) return p;
             string providerName = auth.Provider ?? spec.Name;
             if (!_gates.TryGetValue(providerName, out var gate)) _gates[providerName] = gate = new ProviderGate();
-            p = new OAuthTokenProvider(spec.Name, auth, spec.Url, _store, _http, gate: gate);
+            p = new OAuthTokenProvider(spec.Name, auth, spec.Url, _store, _http, gate: gate, lockDir: _lockDir);
             p.Changed += () => Changed?.Invoke();
             _providers[spec.Name] = p;
             return p;

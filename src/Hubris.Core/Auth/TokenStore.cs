@@ -28,8 +28,10 @@ public static class SecureTokenStores
             OperatingSystem.IsMacOS() ? new MacOsKeychainStore()
             : OperatingSystem.IsWindows() ? new WindowsCredentialStore()
             : null;
-        return Build(os, new FileTokenStore(Path.Combine(HubrisPaths.HomeDir, "tokens")));
+        return Build(os, new FileTokenStore(TokensDir));
     }
+
+    public static string TokensDir => Path.Combine(HubrisPaths.HomeDir, "tokens");
 
     /// <summary>Memory cache over the OS store with the file store as fallback; with no OS store the file store alone (never both over one directory).</summary>
     public static ISecureTokenStore Build(ISecureTokenStore? os, FileTokenStore file)
@@ -85,7 +87,12 @@ public sealed class CachingTokenStore : ISecureTokenStore
     }
 }
 
-/// <summary>The OS store first; when it refuses (keychain prompt denied, blob too large) the 0600 file keeps the login working.</summary>
+/// <summary>
+/// The OS store first; when it refuses (the keychain would need a dialog, blob too large) the 0600 file keeps the
+/// login working. A file is only ever written after the OS store refused, so when one exists it is the newest copy:
+/// reads take it first and writes stay with it, otherwise two hubs with different keychain access would each keep
+/// their own copy and one of them would spend an already rotated refresh token.
+/// </summary>
 public sealed class FallbackTokenStore : ISecureTokenStore
 {
     private readonly ISecureTokenStore _primary, _fallback;
@@ -93,20 +100,29 @@ public sealed class FallbackTokenStore : ISecureTokenStore
 
     public StoredToken? Get(string account)
     {
-        try { return _primary.Get(account) ?? _fallback.Get(account); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Log.Warn($"token store: {ex.Message}; using the file store"); return _fallback.Get(account); }
+        if (_fallback.Get(account) is { } file) return file;
+        try { return _primary.Get(account); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Refused(ex); return null; }
     }
 
     public StoredToken? Reload(string account)
     {
-        try { return _primary.Reload(account) ?? _fallback.Reload(account); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Log.Warn($"token store: {ex.Message}; using the file store"); return _fallback.Reload(account); }
+        if (_fallback.Reload(account) is { } file) return file;
+        try { return _primary.Reload(account); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Refused(ex); return null; }
     }
 
     public void Set(string account, StoredToken token)
     {
-        try { _primary.Set(account, token); _fallback.Delete(account); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Log.Warn($"token store: {ex.Message}; using the file store"); _fallback.Set(account, token); }
+        if (_fallback.Get(account) is not null) { _fallback.Set(account, token); return; }
+        try { _primary.Set(account, token); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Refused(ex); _fallback.Set(account, token); }
+    }
+
+    private int _warned;
+    private void Refused(Exception ex)
+    {
+        if (Interlocked.Exchange(ref _warned, 1) == 0) Log.Warn($"token store: {ex.Message}; using the file store");
     }
 
     public void Delete(string account)
@@ -159,9 +175,9 @@ public sealed class FileTokenStore : ISecureTokenStore
 
 /// <summary>
 /// One generic-password item in the login keychain (service <see cref="SecureTokenStores.Service"/>, account "vault")
-/// holding a JSON map of every provider's token. One item means one authorization prompt for the whole hub, and
-/// updates go through SecItemUpdate so the user's "Always Allow" on that item survives every refresh. The map is read
-/// once per process and served from memory; the keychain is touched again only when a token changes.
+/// holding a JSON map of every provider's token. Updates go through SecItemUpdate so the item keeps its access
+/// list. The map is read once per process and served from memory; the keychain is touched again only when a token
+/// changes. No call ever shows a dialog (see the constructor).
 /// </summary>
 [SupportedOSPlatform("macos")]
 public sealed partial class MacOsKeychainStore : ISecureTokenStore
@@ -177,6 +193,18 @@ public sealed partial class MacOsKeychainStore : ISecureTokenStore
     [LibraryImport(SecurityLib)] private static partial int SecItemCopyMatching(nint query, out nint result);
     [LibraryImport(SecurityLib)] private static partial int SecItemUpdate(nint query, nint attributesToUpdate);
     [LibraryImport(SecurityLib)] private static partial int SecItemDelete(nint query);
+    [LibraryImport(SecurityLib)] private static partial int SecKeychainSetUserInteractionAllowed(byte state);
+
+    /// <summary>
+    /// The hub is a background process: a keychain dialog from it appears out of nowhere (every refresh, on every
+    /// hub) and blocks the call behind it. With interaction off, an item this binary may not read fails at once
+    /// (errSecAuthFailed, -25293) and the caller falls back to the file store.
+    /// </summary>
+    public MacOsKeychainStore()
+    {
+        int status = SecKeychainSetUserInteractionAllowed(0);
+        if (status != 0) Log.Warn($"keychain: could not turn dialogs off (OSStatus {status})");
+    }
     [LibraryImport(CoreFoundationLib)] private static partial nint CFDictionaryCreate(nint allocator, nint keys, nint values, nint count, nint keyCallBacks, nint valueCallBacks);
     [LibraryImport(CoreFoundationLib)] private static partial nint CFStringCreateWithCString(nint allocator, nint cString, uint encoding);
     [LibraryImport(CoreFoundationLib)] private static partial nint CFDataCreate(nint allocator, nint bytes, nint length);

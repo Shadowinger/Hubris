@@ -75,6 +75,7 @@ public sealed class HubClient : IAsyncDisposable
     public Task ReloadConfigAsync() => SendAsync(new ControlMessage { Type = ControlTypes.ReloadConfig });
     public Task ForgetAsync(string tool) => SendAsync(new ControlMessage { Type = ControlTypes.Forget, Tool = tool });
     public Task ClearCacheAsync() => SendAsync(new ControlMessage { Type = ControlTypes.ClearCache });
+    public Task RefreshBridgeAsync(string bridge) => SendAsync(new ControlMessage { Type = ControlTypes.ClearCache, Bridge = bridge });
     public Task RequestStatusAsync() => SendAsync(new ControlMessage { Type = ControlTypes.GetStatus });
     public Task RequestToolsAsync() => SendAsync(new ControlMessage { Type = ControlTypes.ListTools });
     public Task ShutdownHubAsync() => SendAsync(new ControlMessage { Type = ControlTypes.Shutdown });

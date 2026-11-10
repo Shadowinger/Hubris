@@ -11,7 +11,9 @@ namespace Hubris.Auth;
 
 public sealed class OAuthException : Exception
 {
-    public OAuthException(string message) : base(message) { }
+    public OAuthException(string message, string? error = null) : base(message) => Error = error;
+    /// <summary>The token endpoint's "error" code (invalid_grant, ...), when the failure came from there.</summary>
+    public string? Error { get; }
 }
 
 /// <summary>Resolved endpoints for one MCP server, found through RFC 9728 → RFC 8414 (with the usual fallbacks).</summary>
@@ -253,7 +255,7 @@ public static class OAuthPkceFlow
         TokenResponse? tr = null;
         try { tr = JsonSerializer.Deserialize(body, AuthJsonContext.Default.TokenResponse); } catch (JsonException) { }
         if (!resp.IsSuccessStatusCode || tr?.AccessToken is null or "")
-            throw new OAuthException($"token request failed: HTTP {(int)resp.StatusCode} {tr?.Error ?? ""} {tr?.ErrorDescription ?? Trim(body)}".TrimEnd());
+            throw new OAuthException($"token request failed: HTTP {(int)resp.StatusCode} {tr?.Error ?? ""} {tr?.ErrorDescription ?? Trim(body)}".TrimEnd(), tr?.Error);
         return tr;
     }
 

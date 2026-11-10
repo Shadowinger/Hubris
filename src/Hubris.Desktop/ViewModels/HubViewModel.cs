@@ -136,7 +136,10 @@ public sealed class HubViewModel : ObservableObject
                 ApplyStatus(m);
                 break;
             case ControlTypes.OAuthChanged:
+                var pending = Auth.Where(a => a.IsPending).Select(a => a.Bridge).ToHashSet();
                 ApplyAuth(m.Auth);
+                foreach (var a in Auth)
+                    if (a.IsConnected && pending.Contains(a.Bridge)) SignedIn?.Invoke(this, a.Bridge);
                 foreach (var a in m.Auth ?? new())
                     if (a.State is "connected" or "error") AddEvent(a.State == "connected" ? EventRow.Info($"oauth: {a.Bridge} signed in") : EventRow.Error($"oauth: {a.Bridge} failed: {a.Error}"));
                 break;
@@ -182,6 +185,10 @@ public sealed class HubViewModel : ObservableObject
     }
 
     public Task ReloadConfigAsync() => _client.ReloadConfigAsync();
+    public Task SignInAsync(string bridge) => _client.OAuthStartAsync(bridge);
+    public Task RefreshBridgeAsync(string bridge) => _client.RefreshBridgeAsync(bridge);
+    /// <summary>A browser login on this hub just ended well; the other hubs have to re-list that bridge to see its tools.</summary>
+    public event Action<HubViewModel, string>? SignedIn;
 
     public void MarkDisconnected()
     {

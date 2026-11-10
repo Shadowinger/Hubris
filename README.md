@@ -62,11 +62,16 @@ client ──stdio──▶ Hubris ──stdio──▶ bridge 1 (npx …)
   authorization server (RFC 9728 → RFC 8414), registers itself dynamically when the server allows it (or uses
   `clientId`/`clientSecret` from the block), runs the authorization-code flow with PKCE against a loopback
   listener on 127.0.0.1, and keeps the token in the OS secret store: on macOS one login-keychain item (service `com.hubris.mcp.oauth`,
-  account `vault`) holding every provider's token, read once per hub and updated in place so "Always Allow" sticks;
+  account `vault`) holding every provider's token, read once per hub and updated in place;
   the Credential Manager on Windows; a 0600 file under `~/.hubris/tokens` elsewhere.
+  The hub never shows a Keychain dialog. When the Keychain would need one (the item was created by a different
+  build of the binary), the token is kept in the 0600 file instead and stays there, so every hub reads the same copy.
   Tokens are never written to `config.json` or the cache database. A token inside 60 s of expiry is refreshed
   before use, a 401 triggers one refresh and retry, concurrent calls share one refresh, and every 5 minutes an
-  idle hub refreshes any token within 10 minutes of expiry so refresh tokens with an idle timeout keep living. For a stdio bridge
+  idle hub refreshes any token within 10 minutes of expiry so refresh tokens with an idle timeout keep living.
+  Several hubs share the token: a lock file per provider lets one of them refresh while the others wait and take
+  the rotated token, because a refresh token used twice gets the whole grant revoked. A refresh token the server
+  rejects with `invalid_grant` is dropped and the bridge shows as expired until the next Connect. For a stdio bridge
   the token goes into the child's environment under `auth.env` right before the lazy spawn. The desktop app's
   Connections card shows the state per bridge with Connect / Disconnect; the same goes over the control socket
   as `oauth_start`, `oauth_revoke` and the `oauth_changed` event.
@@ -126,13 +131,15 @@ Bridges live in `~/.hubris/config.json` (mode 0600):
 
 The desktop configurator has a "Known remote servers" list: 54 servers from the Claude connector directory
 (`catalog/remote-servers.json`, Notion, Linear, Atlassian, Stripe, Slack, Figma, Supabase and so on), each added
-to `config.json` with one click as a URL bridge with an OAuth block. The search box next to it queries the public
+to `config.json` with one click as a URL bridge with an OAuth block; running hubs load it at once and one of
+them opens the browser sign-in right away. The search box next to it queries the public
 registry at registry.modelcontextprotocol.io and lists every entry that has a remote endpoint.
 
 An `auth` block takes `provider` (secret-store account, default the bridge name; two bridges naming the same
 provider share one login), `issuer` (the MCP server URL to discover from; required for a stdio bridge),
 `clientId` / `clientSecret` (otherwise dynamic registration), `scope`, and `env` (stdio only: the variable the
-child reads the token from). Press Connect in the desktop app once; refreshes happen on their own.
+child reads the token from). Servers added from the list sign in on their own; for a hand-written bridge press
+Connect in the desktop app once. Refreshes happen in the background and never open a window.
 
 `${NAME}` in env and header values is read from the hub's environment at start; the file keeps the
 placeholder. They can also be given on the command line with `--bridge=name:command arg…` or
@@ -183,7 +190,7 @@ tests/run.sh                        # unit tests, warning-free AOT publish, e2e 
 dotnet test tests/Hubris.Tests      # unit tests only
 ```
 
-133 xUnit tests and 77 end-to-end checks (`tests/e2e/control_test.py` drives a published binary with a Python
+137 xUnit tests and 78 end-to-end checks (`tests/e2e/control_test.py` drives a published binary with a Python
 stdio echo server as bridge, `tests/e2e/http_test.py` with a Python Streamable HTTP server). Both projects publish with `TreatWarningsAsErrors` and zero IL/AOT warnings.
 
 ## Layout

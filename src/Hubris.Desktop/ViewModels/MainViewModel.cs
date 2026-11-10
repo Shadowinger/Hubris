@@ -18,10 +18,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _discovery = discovery;
         _launcher = launcher;
         Config = new ConfigViewModel(launcher);
-        Config.ReloadRunningHubs = async () =>
+        Config.ReloadRunningHubs = async signIn =>
         {
-            foreach (var h in Hubs.ToArray()) await h.ReloadConfigAsync();
-            return Hubs.Count;
+            var hubs = Hubs.ToArray();
+            foreach (var h in hubs) await h.ReloadConfigAsync();
+            // One hub runs the browser login (commands on one connection are handled in order, so the bridge exists by then);
+            // the token lands in the shared store and SignedIn tells the rest.
+            if (signIn is not null && hubs.Length > 0) await hubs[0].SignInAsync(signIn);
+            return hubs.Length;
         };
         ShowConfigCommand = new RelayCommand(() => { SelectedHub = null; ShowCatalog = false; ShowConfig = true; });
         ShowCatalogCommand = new RelayCommand(() => { SelectedHub = null; ShowConfig = false; ShowCatalog = true; });
@@ -72,6 +76,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             var vm = new HubViewModel(client);
             vm.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(HubViewModel.PendingCount)) RaisePending(); };
+            vm.SignedIn += (from, bridge) => { foreach (var other in Hubs.ToArray()) if (!ReferenceEquals(other, from)) _ = other.RefreshBridgeAsync(bridge); };
             Hubs.Add(vm);
         });
     }
