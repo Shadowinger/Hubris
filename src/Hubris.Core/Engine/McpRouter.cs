@@ -269,9 +269,12 @@ public sealed class McpRouter
         }
 
         string modeText = ModeNames.ToText(_runtime.Mode);
-        string instructions = _runtime.Mode == ExecutionMode.Safe
-            ? $"Hubris runs in {modeText} mode: read-only tools execute immediately; mutating tools are scanned for destructive patterns and destructive tools are blocked. A blocked call either waits for the user to approve it in the Hubris desktop app or returns isError=true with a [SAFE MODE BLOCKED] message – in that case ask the user to approve it or to switch Hubris to Bypass mode."
-            : $"Hubris runs in {modeText} mode: all tool calls execute without policy checks.";
+        string instructions = _runtime.Mode switch
+        {
+            ExecutionMode.Safe => $"Hubris runs in {modeText} mode: read-only tools execute immediately; mutating tools are scanned for destructive patterns and destructive tools are blocked. A blocked call either waits for the user to approve it in the Hubris desktop app or returns isError=true with a [SAFE MODE BLOCKED] message – in that case ask the user to approve it or to switch Hubris to Auto or Bypass mode.",
+            ExecutionMode.Auto => $"Hubris runs in {modeText} mode: tool calls execute without confirmation, except calls that look dangerous (irreversible deletion, force push or discarding git work, pipe to shell, production deploys and migrations, permission grants, secrets/DNS/certificates, cloud mass deletion, payments). Such a call returns isError=true with [AUTO MODE BLOCKED] and the rule it matched: take a different approach instead of repeating it, or tell the user it was blocked. After {SecurityInterceptor.AutoMaxConsecutiveBlocks} blocked calls in a row or {SecurityInterceptor.AutoMaxTotalBlocks} in total, blocked calls wait for the user's approval in the Hubris desktop app.",
+            _ => $"Hubris runs in {modeText} mode: all tool calls execute without policy checks; only removing a critical path (/, the home directory, system directories) still needs the user's approval.",
+        };
         instructions += $" Use {SearchToolsMetaTool.ToolName} with keywords to discover additional tools; discovered tools are unlocked and can be called directly or through {ExecuteToolMetaTool.ToolName}. Resources and prompts of the bridged servers are listed as-is (prompt names carry the bridge prefix).";
         if (_runtime.CompactContext)
             instructions += " Compact context is enabled: only core tools are listed until unlocked.";
@@ -325,7 +328,7 @@ public sealed class McpRouter
         {
             string reason = verdict.Reason ?? SecurityInterceptor.BlockedPrefix;
 
-            // A remembered session decision short-circuits the gate (Bypass never reaches here: Evaluate returns Ok).
+            // A remembered session decision short-circuits the gate (Bypass reaches here only for a critical-path removal).
             bool? remembered = _security.DecisionFor(tool.Name);
             if (remembered == true && verdict.PatternHit)
             {
@@ -343,7 +346,7 @@ public sealed class McpRouter
                 outcome = "approved";
                 Log.Info($"'{tool.Name}' auto-approved (remembered for this session)");
             }
-            else if (_control is { HasClients: true })
+            else if (verdict.Ask && _control is { HasClients: true })
             {
                 Log.Info($"holding '{tool.Name}' for approval");
                 ApprovalDecision decision = await _control.RequestApprovalAsync(tool.Name, tool.RiskLevel, reason, args, ct).ConfigureAwait(false);
@@ -360,6 +363,7 @@ public sealed class McpRouter
                     return denied;
                 }
                 outcome = "approved";
+                _security.ResumeAuto();
                 Log.Info($"'{tool.Name}' approved by user");
             }
             else

@@ -16,7 +16,7 @@ public sealed class ConfigViewModel : ObservableObject
     private readonly StringBuilder _log = new();
 
     private string _serverPath;
-    private bool _isBypass;
+    private string _mode = "safe";
     private bool _compact = true;
     private bool _verbose;
     private bool _noControl;
@@ -39,8 +39,9 @@ public sealed class ConfigViewModel : ObservableObject
         BrowseServerCommand = new AsyncCommand(BrowseServerAsync);
         CopyCommandCommand = new AsyncCommand(() => CopyToClipboard?.Invoke(CommandPreview) ?? Task.CompletedTask);
         ClearLogCommand = new RelayCommand(() => { _log.Clear(); LogText = ""; });
-        SetSafeCommand = new RelayCommand(() => IsBypass = false);
-        SetBypassCommand = new RelayCommand(() => IsBypass = true);
+        SetSafeCommand = new RelayCommand(() => SetMode("safe"));
+        SetAutoCommand = new RelayCommand(() => SetMode("auto"));
+        SetBypassCommand = new RelayCommand(() => SetMode("bypass"));
 
         ScanClientsCommand = new RelayCommand(ScanClients);
         ScanProjectsCommand = new RelayCommand(ScanProjects, () => Directory.Exists(_projectRoot));
@@ -297,8 +298,14 @@ public sealed class ConfigViewModel : ObservableObject
     // ---------------------------------------------------------------- fields
     public string ServerPath { get => _serverPath; set { if (Set(ref _serverPath, value)) { Raise(nameof(ServerPathValid)); Raise(nameof(CommandPreview)); RaiseCommands(); } } }
     public bool ServerPathValid => File.Exists(_serverPath);
-    public bool IsBypass { get => _isBypass; set { if (Set(ref _isBypass, value)) { Raise(nameof(IsSafe)); Raise(nameof(CommandPreview)); } } }
-    public bool IsSafe => !_isBypass;
+    public bool IsSafe => _mode == "safe";
+    public bool IsAuto => _mode == "auto";
+    public bool IsBypass => _mode == "bypass";
+    private void SetMode(string mode)
+    {
+        if (!Set(ref _mode, mode, nameof(IsSafe))) return;
+        Raise(nameof(IsAuto)); Raise(nameof(IsBypass)); Raise(nameof(CommandPreview));
+    }
     public bool Compact { get => _compact; set { if (Set(ref _compact, value)) Raise(nameof(CommandPreview)); } }
     public bool Verbose { get => _verbose; set { if (Set(ref _verbose, value)) Raise(nameof(CommandPreview)); } }
     public bool NoControl { get => _noControl; set { if (Set(ref _noControl, value)) Raise(nameof(CommandPreview)); } }
@@ -331,6 +338,7 @@ public sealed class ConfigViewModel : ObservableObject
     public AsyncCommand CopyCommandCommand { get; }
     public RelayCommand ClearLogCommand { get; }
     public RelayCommand SetSafeCommand { get; }
+    public RelayCommand SetAutoCommand { get; }
     public RelayCommand SetBypassCommand { get; }
 
     private BridgeRow NewBridge()
@@ -344,7 +352,7 @@ public sealed class ConfigViewModel : ObservableObject
     public List<string> BuildServerArgs()
     {
         var list = new List<string> { "--stdio" };
-        if (_isBypass) list.Add("--mode=bypass");
+        if (_mode != "safe") list.Add("--mode=" + _mode);
         if (_compact) list.Add("--compact");
         if (_verbose) list.Add("--verbose");
         if (_noControl) list.Add("--no-control");

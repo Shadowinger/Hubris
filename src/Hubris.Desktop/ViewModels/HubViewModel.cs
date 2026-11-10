@@ -15,7 +15,6 @@ public sealed class HubViewModel : ObservableObject
     private readonly DispatcherTimer _tick;
 
     private string _mode = "Safe";
-    private bool _isBypass;
     private string _clientName = "";
     private string _uptime = "–";
     private string _rss = "–";
@@ -36,9 +35,9 @@ public sealed class HubViewModel : ObservableObject
         Version = client.Descriptor.Version;
         _clientName = client.Descriptor.Client ?? "";
         _mode = client.Descriptor.Mode;
-        _isBypass = _mode == "Bypass";
 
         SetSafeCommand = new AsyncCommand(() => _client.SetModeAsync("safe"));
+        SetAutoCommand = new AsyncCommand(() => _client.SetModeAsync("auto"));
         SetBypassCommand = new AsyncCommand(() => _client.SetModeAsync("bypass"));
         ClearCacheCommand = new AsyncCommand(() => _client.ClearCacheAsync());
         ClearEventsCommand = new RelayCommand(() => Events.Clear());
@@ -62,11 +61,11 @@ public sealed class HubViewModel : ObservableObject
     public string ClientName { get => _clientName; private set { if (Set(ref _clientName, value)) { Raise(nameof(Title)); } } }
 
     // ---------------------------------------------------------------- mode
-    public string Mode { get => _mode; private set { if (Set(ref _mode, value)) Raise(nameof(IsSafe)); } }
+    /// <summary>The buttons send the command; the hub's mode_changed sets this.</summary>
+    public string Mode { get => _mode; private set { if (Set(ref _mode, value)) { Raise(nameof(IsSafe)); Raise(nameof(IsAuto)); Raise(nameof(IsBypass)); } } }
     public bool IsSafe => _mode == "Safe";
-
-    /// <summary>Two-way bound to the toggle; the setter sends the command, the event confirms it.</summary>
-    public bool IsBypass => _isBypass; // the Safe/Bypass buttons send the command; the hub's mode_changed sets this
+    public bool IsAuto => _mode == "Auto";
+    public bool IsBypass => _mode == "Bypass";
 
     // ---------------------------------------------------------------- status
     public string Uptime { get => _uptime; private set => Set(ref _uptime, value); }
@@ -117,6 +116,7 @@ public sealed class HubViewModel : ObservableObject
 
     // ---------------------------------------------------------------- commands
     public AsyncCommand SetSafeCommand { get; }
+    public AsyncCommand SetAutoCommand { get; }
     public AsyncCommand SetBypassCommand { get; }
     public AsyncCommand ClearCacheCommand { get; }
     public RelayCommand ClearEventsCommand { get; }
@@ -144,7 +144,7 @@ public sealed class HubViewModel : ObservableObject
                     if (a.State is "connected" or "error") AddEvent(a.State == "connected" ? EventRow.Info($"oauth: {a.Bridge} signed in") : EventRow.Error($"oauth: {a.Bridge} failed: {a.Error}"));
                 break;
             case ControlTypes.ModeChanged:
-                if (m.Mode is not null) { Mode = m.Mode; _isBypass = m.Mode == "Bypass"; Raise(nameof(IsBypass)); }
+                if (m.Mode is not null) Mode = m.Mode;
                 break;
             case ControlTypes.ToolsChanged:
                 if (m.Tools is not null) ReplaceTools(m.Tools);
@@ -201,7 +201,7 @@ public sealed class HubViewModel : ObservableObject
 
     private void ApplyStatus(ControlMessage m)
     {
-        if (m.Mode is not null) { Mode = m.Mode; _isBypass = m.Mode == "Bypass"; Raise(nameof(IsBypass)); }
+        if (m.Mode is not null) Mode = m.Mode;
         if (m.Client is not null) ClientName = m.Client;
         Uptime = Fmt.Duration(m.UptimeSec);
         Rss = Fmt.Bytes(m.RssBytes);

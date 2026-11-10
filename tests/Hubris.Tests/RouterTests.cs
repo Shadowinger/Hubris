@@ -196,7 +196,7 @@ public class RouterTests
         await using var hub = new HubHarness();
         hub.Security.Remember("mut", allow: false); // deny-listed...
         hub.Security.Mode = ExecutionMode.Bypass;   // ...but Bypass runs everything anyway
-        var ok = await hub.ToolAsync("mut", new JsonObject { ["cmd"] = "rm -rf /" });
+        var ok = await hub.ToolAsync("mut", new JsonObject { ["cmd"] = "rm -rf /tmp/x" }); // a critical path would still be held
         Assert.Null(ok["isError"]);
         Assert.Equal(1, hub.Mutating.Calls);
     }

@@ -81,7 +81,19 @@ client ──stdio──▶ Hubris ──stdio──▶ bridge 1 (npx …)
   `rm -rf /`) for things like `rm -rf`, `DROP TABLE`, `DELETE`/`UPDATE` without `WHERE`, `git push --force`;
   destructive calls are blocked. Every pattern has a match timeout, and a timeout counts as a hit. A blocked call waits for Approve / Deny in the desktop app
   (`--approval-timeout`, default 120 s) and fails with `[SAFE MODE BLOCKED]` if nobody answers. "Remember for
-  this session" covers a tool's declared risk, never an argument-pattern hit. `--mode=bypass` turns all of it off.
+  this session" covers a tool's declared risk, never an argument-pattern hit.
+- **Auto mode** (`--mode=auto`, or the Auto button per hub). Modelled on Claude Code's auto mode, with fixed
+  rules where Claude Code uses a classifier model. Everything runs without asking, including tools a server
+  marks destructive, except a call whose arguments match a danger pattern (the Safe-mode list plus discarding
+  git work, `terraform`/`pulumi`/`cdk destroy`, `--prod` deploys and migrations, cloud mass deletion, IAM and
+  repository permission grants, flags like `--insecure`) or, for a tool that is not read-only, whose name says
+  deletion, deploy or migration, permission grant, secrets/DNS/certificates/firewall, or payment. Pushing to
+  the default branch is allowed; force push is not. A blocked call is not put in front of you: it returns
+  `[AUTO MODE BLOCKED]` with the rule it matched, so the model takes another route. After 3 blocked calls in
+  a row or 20 in total the next blocked call waits for Approve / Deny, and an approval lets auto mode decide
+  alone again. A tool allowed with "Remember for this session" is no longer blocked by its name.
+- **Bypass mode** (`--mode=bypass`). No checks and no prompts. The one exception, as in Claude Code: `rm` on
+  `/`, the home directory or a system directory still waits for approval, in Auto mode too.
 - **DLP.** Tool output is scanned for API keys and `key=value` / `"key": "value"` secrets (password, token,
   secret, api key and the like, also as `DATABASE_PASSWORD=`), bearer tokens and JWTs, private keys, Slack
   tokens, card numbers (Luhn-checked), IBANs (mod-97-checked) and Czech birth numbers written with a slash;
@@ -149,7 +161,7 @@ Bridged tools show up as `fs__read_file`, `gh__create_issue`, `linear__create_is
 ## Usage
 
 ```
-Hubris --stdio [--compact] [--mode=safe|bypass] [--approval-timeout=120] [--auto-lock=600] [--cache-ttl=24h]
+Hubris --stdio [--compact] [--mode=safe|auto|bypass] [--approval-timeout=120] [--auto-lock=600] [--cache-ttl=24h]
        [--no-cache] [--no-control] [--control-trust-all] [--verbose]
        [--bridge=<name>:<command> [args…]]… [--bridge=<name>:<url> ["Header: value"…]]…
 ```
@@ -174,7 +186,7 @@ build/bundle-macos.sh                 # macOS: publishes both and writes artifac
 build/bundle-macos.sh --no-publish    # bundle the existing publish output
 ```
 
-Sidebar lists running hubs (a hub built from an older version is marked). Per hub: Safe / Bypass switch,
+Sidebar lists running hubs (a hub built from an older version is marked). Per hub: Safe / Auto / Bypass switch,
 pending approvals with a remember checkbox, telemetry (calls, blocked, DLP redactions, cache hits, bridges
 running, context cost), live call log with request/response inspector, the tool list with Lock / Unlock /
 Forget. The configurator tab does client config scan / hijack / restore, edits `config.json`, and can launch a
@@ -190,7 +202,7 @@ tests/run.sh                        # unit tests, warning-free AOT publish, e2e 
 dotnet test tests/Hubris.Tests      # unit tests only
 ```
 
-137 xUnit tests and 78 end-to-end checks (`tests/e2e/control_test.py` drives a published binary with a Python
+176 xUnit tests and 85 end-to-end checks (`tests/e2e/control_test.py` drives a published binary with a Python
 stdio echo server as bridge, `tests/e2e/http_test.py` with a Python Streamable HTTP server). Both projects publish with `TreatWarningsAsErrors` and zero IL/AOT warnings.
 
 ## Layout

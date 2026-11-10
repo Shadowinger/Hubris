@@ -69,7 +69,7 @@ public sealed class HubStatusTool : IMcpTool
     public HubStatusTool(HubRuntime runtime) => _rt = runtime;
 
     public string Name => "hub_status";
-    public string Description => "Hubris runtime status: RAM footprint, uptime, execution mode (Safe/Bypass), cache hit ratio, registered tool counts.";
+    public string Description => "Hubris runtime status: RAM footprint, uptime, execution mode (Safe/Auto/Bypass), cache hit ratio, registered tool counts.";
     public ToolRiskLevel RiskLevel => ToolRiskLevel.ReadOnly;
     public bool Pinned => true;
     public JsonObject InputSchema { get; } = SchemaBuilder.Object();

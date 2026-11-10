@@ -47,7 +47,7 @@ public sealed class CliOptions
     public IReadOnlyList<string> ServerArgs()
     {
         var list = new List<string> { "--stdio" };
-        if (Mode == ExecutionMode.Bypass) list.Add("--mode=bypass");
+        if (Mode != ExecutionMode.Safe) list.Add("--mode=" + ModeNames.ToText(Mode).ToLowerInvariant());
         if (Compact) list.Add("--compact");
         if (Verbose) list.Add("--verbose");
         if (NoControl) list.Add("--no-control");
@@ -96,13 +96,13 @@ public sealed class CliOptions
 
             if (a.StartsWith("--mode=", StringComparison.Ordinal))
             {
-                if (!ModeNames.TryParseMode(a[7..], out var mode)) { error = $"invalid --mode value '{a[7..]}' (expected safe|bypass)"; return false; }
+                if (!ModeNames.TryParseMode(a[7..], out var mode)) { error = $"invalid --mode value '{a[7..]}' (expected safe|auto|bypass)"; return false; }
                 options.Mode = mode;
                 continue;
             }
             if (a == "--mode")
             {
-                if (i + 1 >= args.Length || !ModeNames.TryParseMode(args[i + 1], out var mode)) { error = "--mode requires safe|bypass"; return false; }
+                if (i + 1 >= args.Length || !ModeNames.TryParseMode(args[i + 1], out var mode)) { error = "--mode requires safe|auto|bypass"; return false; }
                 options.Mode = mode; i++;
                 continue;
             }
@@ -198,13 +198,14 @@ public sealed class CliOptions
         Console.Error.WriteLine(
             "Hubris " + HubRuntime.Version + " – Native AOT MCP multiplexer & security gateway\n" +
             "\n" +
-            "usage: Hubris [--stdio] [--mode=safe|bypass] [--compact] [--verbose]\n" +
+            "usage: Hubris [--stdio] [--mode=safe|auto|bypass] [--compact] [--verbose]\n" +
             "              [--bridge=<name>:<command> [arg ...]]...\n" +
             "       Hubris --install-vscode [server flags]\n" +
             "       Hubris --install-claude [server flags]\n" +
             "\n" +
             "  --stdio            serve MCP over stdin/stdout (default)\n" +
             "  --mode=safe        block destructive tools and dangerous arguments (default)\n" +
+            "  --mode=auto        run without asking; block only dangerous calls and tell the model why\n" +
             "  --mode=bypass      execute every tool call without policy checks\n" +
             "  --compact          list only core tools; others are discoverable via mcp_search_tools\n" +
             "  --bridge=n:cmd     spawn an external stdio MCP server; its tools appear as n__<tool>\n" +

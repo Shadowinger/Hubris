@@ -162,6 +162,29 @@ send({"type":"set_mode","mode":"bypass"}); mc, _ = recv("mode_changed")
 check(mc["mode"] == "Bypass", "set_mode bypass -> mode_changed")
 call_async(13, "py__nuke", {}); res = read_response(13)
 check(not res["result"].get("isError"), "bypass: destructive tool runs without approval")
+# --- auto mode: declared-destructive tools run, dangerous arguments go back to the model, the 4th block in a row asks
+send({"type":"set_mode","mode":"auto"}); mc, _ = recv("mode_changed")
+check(mc["mode"] == "Auto", "set_mode auto -> mode_changed")
+call_async(130, "py__nuke", {}); res = read_response(130)
+check(not res["result"].get("isError"), "auto: a tool that only declares destructiveHint runs without approval")
+blocked = []
+for i in range(3):
+    call_async(131 + i, "py__shell", {"cmd": "git push --force"}); blocked.append(read_response(131 + i))
+check(all(b["result"]["isError"] and "[AUTO MODE BLOCKED]" in b["result"]["content"][0]["text"] and "--force" in b["result"]["content"][0]["text"] for b in blocked),
+      "auto: three dangerous calls return the matched rule at once, no approval request")
+call_async(134, "py__shell", {"cmd": "git push --force"})
+req134, _ = recv("approval_request")
+check(req134["tool"] == "py__shell", "auto: after 3 blocks in a row the next one waits for approval")
+send({"type":"approve","approvalId":req134["approvalId"]}); recv("ack"); res = read_response(134)
+check(not res["result"].get("isError"), "auto: the approved call ran")
+call_async(135, "py__shell", {"cmd": "git push --force"}); res = read_response(135)
+check(res["result"]["isError"] and "[AUTO MODE BLOCKED]" in res["result"]["content"][0]["text"], "auto: the approval resumed auto mode (blocked again without asking)")
+# --- a critical-path removal is held in every mode, bypass included
+send({"type":"set_mode","mode":"bypass"}); recv("mode_changed")
+call_async(136, "py__shell", {"cmd": "rm -rf ~"})
+req136, _ = recv("approval_request")
+check("BLOCKED IN EVERY MODE" in req136.get("reason", ""), "bypass: rm -rf ~ still waits for approval")
+send({"type":"deny","approvalId":req136["approvalId"]}); recv("ack"); read_response(136)
 send({"type":"set_mode","mode":"safe"}); recv("mode_changed")
 
 # --- mcp_execute_tool proxy + unlock + list_changed
