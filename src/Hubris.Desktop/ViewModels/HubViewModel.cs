@@ -74,10 +74,14 @@ public sealed class HubViewModel : ObservableObject
     public string Cache { get => _cache; private set => Set(ref _cache, value); }
     public long Blocked { get => _blocked; private set => Set(ref _blocked, value); }
     public long Dlp { get => _dlp; private set => Set(ref _dlp, value); }
-    public int ToolCount { get => _toolCount; private set => Set(ref _toolCount, value); }
-    public int BridgeCount { get => _bridgeCount; private set { if (Set(ref _bridgeCount, value)) Raise(nameof(BridgesText)); } }
+    public int ToolCount { get => _toolCount; private set { if (Set(ref _toolCount, value)) Raise(nameof(ContextOf)); } }
+    public int BridgeCount { get => _bridgeCount; private set { if (Set(ref _bridgeCount, value)) { Raise(nameof(BridgesText)); Raise(nameof(BridgesOf)); } } }
     public int BridgesRunning { get => _bridgesRunning; private set { if (Set(ref _bridgesRunning, value)) Raise(nameof(BridgesText)); } }
     public string BridgesText => _bridgeCount == 0 ? "0" : $"{_bridgeCount} · {_bridgesRunning} running";
+    public string BridgesOf => $"of {_bridgeCount}";
+    /// <summary>Tool calls seen since this window attached to the hub.</summary>
+    public int Calls { get => _calls; private set => Set(ref _calls, value); }
+    private int _calls;
     public int Clients { get => _clients; private set => Set(ref _clients, value); }
     public string CacheFill => $"{_cacheSize} cached · {_cacheCapacity} bridges";
 
@@ -90,6 +94,10 @@ public sealed class HubViewModel : ObservableObject
     public string ContextTile => $"~{_activeTokens} tok";
     public string ContextTileSub => $"{_activeTools}/{ToolCount} tools · {SavedPercent}% saved";
     public string SavedText => $"{SavedPercent}% saved";
+    public string ContextOf => $"of {ToolCount} tools";
+    /// <summary>Share of all tool definitions that is in the model's context right now, 0 to 100.</summary>
+    public double ContextPercent => _totalTokens == 0 ? 0 : Math.Clamp(100.0 * _activeTokens / _totalTokens, 0, 100);
+    public string ContextNote => $"~{_activeTokens:N0} of {_totalTokens:N0} tokens · {SavedPercent}% saved";
     public bool SavedGood => SavedPercent >= 50;
     public bool SavedSome => SavedPercent is > 0 and < 50;
 
@@ -101,6 +109,7 @@ public sealed class HubViewModel : ObservableObject
         _totalTokens = totalTok ?? _totalTokens;
         Raise(nameof(ActiveTools)); Raise(nameof(ActiveTokens)); Raise(nameof(TotalTokens)); Raise(nameof(SavedPercent));
         Raise(nameof(ContextMeter)); Raise(nameof(ContextTile)); Raise(nameof(ContextTileSub)); Raise(nameof(SavedText)); Raise(nameof(SavedGood)); Raise(nameof(SavedSome));
+        Raise(nameof(ContextOf)); Raise(nameof(ContextPercent)); Raise(nameof(ContextNote));
     }
 
     // ---------------------------------------------------------------- collections
@@ -150,6 +159,7 @@ public sealed class HubViewModel : ObservableObject
                 if (m.Tools is not null) ReplaceTools(m.Tools);
                 break;
             case ControlTypes.ToolCall:
+                Calls++;
                 AddEvent(EventRow.FromToolCall(m));
                 break;
             case ControlTypes.ApprovalRequest:
@@ -338,6 +348,13 @@ public sealed class EventRow
     public bool ToneDanger => Tone == "danger";
     public bool ToneIndigo => Tone == "indigo";
     public string Detail => string.IsNullOrEmpty(Args) ? Preview : $"args: {Args}\n\n{Preview}";
+    public bool HasArgs => Args.Length > 0;
+    public bool HasPreview => Preview.Length > 0;
+    public string RiskText => Risk switch { "ReadOnly" => "read-only", "Mutating" => "mutating", "Destructive" => "destructive", _ => Risk.ToLowerInvariant() };
+    public bool RiskDestructive => Risk == "Destructive";
+    public bool RiskMutating => Risk == "Mutating";
+    public string ResultLabel => Outcome == "waiting" ? "Why it waits" : ToneDanger ? "Returned to the model" : "Result";
+    public string Meta => string.Join(" · ", new[] { Time, RiskText, Duration }.Where(s => s.Length > 0));
 
     public static EventRow FromToolCall(ControlMessage m)
     {
@@ -355,8 +372,7 @@ public sealed class EventRow
             {
                 "ok" or "cached" => "ok",
                 "approved" => "indigo",
-                "blocked" or "denied" or "timeout" => "danger",
-                "error" or "cancelled" => "warn",
+                "blocked" or "denied" or "timeout" or "error" => "danger",
                 _ => "",
             },
         };
@@ -366,11 +382,11 @@ public sealed class EventRow
     {
         Time = Fmt.LocalTime(m.Timestamp),
         Tool = m.Tool ?? "",
-        Outcome = "awaiting approval",
+        Outcome = "waiting",
         Risk = m.Risk ?? "",
         Args = m.Args?.ToJsonString(CompactJson) ?? "",
         Preview = m.Reason ?? "",
-        Tone = "indigo",
+        Tone = "warn",
     };
 
     public static EventRow FromLog(ControlMessage m) => new()

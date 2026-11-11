@@ -11,7 +11,7 @@ before letting them through.
 .NET 10, Native AOT, no reflection, no runtime to install. A desktop app (Avalonia) does configuration,
 takeover of existing client configs, live call view and approvals.
 
-![Hubris desktop app: a destructive call waiting for approval, DLP redactions and context cost on the dashboard](docs/hubris-dashboard.png)
+![Hubris desktop app: a call waiting for approval, the context cost and the live call log with its inspector](docs/hubris-dashboard.png)
 
 ## Numbers
 
