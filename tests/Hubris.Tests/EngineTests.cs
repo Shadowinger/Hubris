@@ -210,6 +210,22 @@ public class ApprovalGateTests
 public class FsReadHeadTests
 {
     [Fact]
+    public async Task Named_pipe_is_turned_away_instead_of_waited_on()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        string dir = Directory.CreateTempSubdirectory("hubris-fifo-").FullName, fifo = Path.Combine(dir, "pipe");
+        using (var mk = System.Diagnostics.Process.Start("mkfifo", fifo)!) await mk.WaitForExitAsync();
+        try
+        {
+            var call = new FsReadHeadTool(pinned: false).ExecuteAsync(new System.Text.Json.Nodes.JsonObject { ["path"] = fifo }, CancellationToken.None).AsTask();
+            Assert.Same(call, await Task.WhenAny(call, Task.Delay(5000))); // a blocking open never comes back: nobody writes to this pipe
+            Assert.True((await call).Failed);
+            Assert.Contains("Not a regular file", (await call).Content[0].Text);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
     public async Task Reads_n_lines_and_flags_more()
     {
         var r = new StringReader("a\r\nb\nc\nd");

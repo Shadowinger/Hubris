@@ -16,6 +16,8 @@ internal sealed class FakeAuthWorld : HttpMessageHandler
     public string ValidToken = "A1";
     public bool RejectEverything;
     public bool BrokenRegistration;
+    public string AuthorizeEndpoint = "https://as.test/authorize";
+    public bool OpenServer;
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage req, CancellationToken ct)
     {
@@ -23,7 +25,7 @@ internal sealed class FakeAuthWorld : HttpMessageHandler
         if (host == "mcp.test" && path == "/.well-known/oauth-protected-resource")
             return Json("""{"resource":"https://mcp.test/mcp","authorization_servers":["https://as.test"],"scopes_supported":["openid"]}""");
         if (host == "as.test" && path == "/.well-known/oauth-authorization-server")
-            return Json("""{"issuer":"https://as.test","authorization_endpoint":"https://as.test/authorize","token_endpoint":"https://as.test/token","registration_endpoint":"https://as.test/register","code_challenge_methods_supported":["S256"],"scopes_supported":["openid","email","offline_access"]}""");
+            return Json($$"""{"issuer":"https://as.test","authorization_endpoint":"{{AuthorizeEndpoint}}","token_endpoint":"https://as.test/token","registration_endpoint":"https://as.test/register","code_challenge_methods_supported":["S256"],"scopes_supported":["openid","email","offline_access"]}""");
         if (host == "as.test" && path == "/register")
         {
             Registrations++;
@@ -58,7 +60,7 @@ internal sealed class FakeAuthWorld : HttpMessageHandler
         if (host == "mcp.test" && path == "/mcp")
         {
             ResourceCalls++;
-            return req.Headers.Authorization?.Parameter == ValidToken ? Json("""{"ok":true}""") : new HttpResponseMessage(HttpStatusCode.Unauthorized);
+            return OpenServer || req.Headers.Authorization?.Parameter == ValidToken ? Json("""{"ok":true}""") : new HttpResponseMessage(HttpStatusCode.Unauthorized);
         }
         return new HttpResponseMessage(HttpStatusCode.NotFound);
     }
@@ -80,6 +82,8 @@ internal sealed class FakeAuthWorld : HttpMessageHandler
             await Task.Delay(50);
             using var http = new HttpClient();
             await http.GetAsync("http://127.0.0.1:" + new Uri(redirect).Port + "/favicon.ico"); // a browser probe must not eat the callback
+            var stray = await http.GetAsync($"{redirect}?code=EVIL&state=guessed");               // nor may another page that guesses the address
+            Assert.Equal(HttpStatusCode.BadRequest, stray.StatusCode);
             var resp = await http.GetAsync($"{redirect}?code=C0DE&state={State}");
             Assert.Contains("close this tab", await resp.Content.ReadAsStringAsync());
         });
@@ -262,13 +266,30 @@ public class AuthTests : IDisposable
     }
 
     [Fact]
-    public async Task Handler_without_a_token_asks_for_connect_instead_of_sending()
+    public async Task Handler_without_a_token_asks_once_and_turns_a_401_into_connect()
     {
         var (provider, world, _) = Build();
         using var http = new HttpClient(new OAuthDelegatingHandler(provider, world));
         var ex = await Assert.ThrowsAsync<NotSignedInException>(() => http.GetAsync("https://mcp.test/mcp"));
         Assert.Contains("Connect", ex.Message);
-        Assert.Equal(0, world.ResourceCalls);
+        Assert.Equal(1, world.ResourceCalls);
+
+        world.OpenServer = true; // a server from the registry that needs no sign-in works without one
+        Assert.Equal(HttpStatusCode.OK, (await http.GetAsync("https://mcp.test/mcp")).StatusCode);
+    }
+
+    [Theory]
+    [InlineData("smb://files.evil.test/share")]
+    [InlineData("file:///Applications/Calculator.app")]
+    [InlineData("http://as.test/authorize")]
+    public async Task Sign_in_address_that_is_not_https_never_reaches_the_browser(string endpoint)
+    {
+        var (provider, world, _) = Build();
+        world.AuthorizeEndpoint = endpoint;
+        var ex = await Assert.ThrowsAsync<OAuthException>(() => provider.LoginAsync(CancellationToken.None));
+        Assert.Contains("not an https address", ex.Message);
+        Assert.Null(world.Challenge); // the fake browser was never opened
+        Assert.True(OAuthPkceFlow.IsWebUrl("http://127.0.0.1:8080/authorize")); // a server on this machine may use plain http
     }
 
     [Fact]
@@ -421,7 +442,8 @@ public class AuthTests : IDisposable
             Security = new Hubris.Security.SecurityInterceptor(Hubris.Security.ExecutionMode.Safe),
             Auth = new OAuthManager(new CountingStore()),
         };
-        var bridge = await new BridgeHost(rt, registry).AddAsync(Remote, CancellationToken.None);
+        // Nothing listens there: without a token the bridge now asks the server once, and a server it cannot reach must not cost the bridge its place.
+        var bridge = await new BridgeHost(rt, registry).AddAsync(Remote with { Url = "http://127.0.0.1:1/mcp" }, CancellationToken.None);
         Assert.NotNull(bridge);
         Assert.Single(rt.Bridges);
         Assert.False(bridge.IsStarted);

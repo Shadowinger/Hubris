@@ -21,7 +21,7 @@ public sealed class HubViewModel : ObservableObject
     private string _heap = "–";
     private string _cache = "–";
     private long _blocked, _dlp;
-    private int _toolCount, _bridgeCount, _bridgesRunning, _clients, _cacheSize, _cacheCapacity;
+    private int _toolCount, _bridgeCount, _bridgesRunning, _clients;
     private string _toolFilter = "";
     private EventRow? _selectedEvent;
     private int _activeTools, _activeTokens, _totalTokens;
@@ -75,15 +75,13 @@ public sealed class HubViewModel : ObservableObject
     public long Blocked { get => _blocked; private set => Set(ref _blocked, value); }
     public long Dlp { get => _dlp; private set => Set(ref _dlp, value); }
     public int ToolCount { get => _toolCount; private set { if (Set(ref _toolCount, value)) Raise(nameof(ContextOf)); } }
-    public int BridgeCount { get => _bridgeCount; private set { if (Set(ref _bridgeCount, value)) { Raise(nameof(BridgesText)); Raise(nameof(BridgesOf)); } } }
-    public int BridgesRunning { get => _bridgesRunning; private set { if (Set(ref _bridgesRunning, value)) Raise(nameof(BridgesText)); } }
-    public string BridgesText => _bridgeCount == 0 ? "0" : $"{_bridgeCount} · {_bridgesRunning} running";
+    public int BridgeCount { get => _bridgeCount; private set { if (Set(ref _bridgeCount, value)) Raise(nameof(BridgesOf)); } }
+    public int BridgesRunning { get => _bridgesRunning; private set => Set(ref _bridgesRunning, value); }
     public string BridgesOf => $"of {_bridgeCount}";
     /// <summary>Tool calls seen since this window attached to the hub.</summary>
     public int Calls { get => _calls; private set => Set(ref _calls, value); }
     private int _calls;
     public int Clients { get => _clients; private set => Set(ref _clients, value); }
-    public string CacheFill => $"{_cacheSize} cached · {_cacheCapacity} bridges";
 
     // ---------------------------------------------------------------- context meter
     public int ActiveTools => _activeTools;
@@ -91,8 +89,6 @@ public sealed class HubViewModel : ObservableObject
     public int TotalTokens => _totalTokens;
     public int SavedPercent => _totalTokens == 0 ? 0 : (int)Math.Round(100.0 * (_totalTokens - _activeTokens) / _totalTokens);
     public string ContextMeter => $"Active in context: {_activeTools} / {ToolCount} tools  (~{_activeTokens} tokens | {SavedPercent}% saved)";
-    public string ContextTile => $"~{_activeTokens} tok";
-    public string ContextTileSub => $"{_activeTools}/{ToolCount} tools · {SavedPercent}% saved";
     public string SavedText => $"{SavedPercent}% saved";
     public string ContextOf => $"of {ToolCount} tools";
     /// <summary>Share of all tool definitions that is in the model's context right now, 0 to 100.</summary>
@@ -108,7 +104,7 @@ public sealed class HubViewModel : ObservableObject
         _activeTokens = activeTok ?? _activeTokens;
         _totalTokens = totalTok ?? _totalTokens;
         Raise(nameof(ActiveTools)); Raise(nameof(ActiveTokens)); Raise(nameof(TotalTokens)); Raise(nameof(SavedPercent));
-        Raise(nameof(ContextMeter)); Raise(nameof(ContextTile)); Raise(nameof(ContextTileSub)); Raise(nameof(SavedText)); Raise(nameof(SavedGood)); Raise(nameof(SavedSome));
+        Raise(nameof(ContextMeter)); Raise(nameof(SavedText)); Raise(nameof(SavedGood)); Raise(nameof(SavedSome));
         Raise(nameof(ContextOf)); Raise(nameof(ContextPercent)); Raise(nameof(ContextNote));
     }
 
@@ -186,7 +182,7 @@ public sealed class HubViewModel : ObservableObject
                         : $"command failed: {m.Error}"));
                 else
                 {
-                    if (m.Text == "browser opened") AddEvent(EventRow.Info("oauth: browser opened for sign-in"));
+                    if (m.Text is { Length: > 0 } text) AddEvent(EventRow.Info("oauth: " + (text == "browser opened" ? "browser opened for sign-in" : text)));
                     if (m.Bridges is { Count: > 0 } b) AddEvent(EventRow.Info($"bridges added: {string.Join(", ", b)}"));
                     if (m.BridgesStale is { Count: > 0 } st) AddEvent(EventRow.Error($"config changed for running bridge(s) {string.Join(", ", st)} — restart the client to apply"));
                 }
@@ -194,6 +190,7 @@ public sealed class HubViewModel : ObservableObject
         }
     }
 
+    public void ReportError(string text) => AddEvent(EventRow.Error(text));
     public Task ReloadConfigAsync() => _client.ReloadConfigAsync();
     public Task SignInAsync(string bridge) => _client.OAuthStartAsync(bridge);
     public Task RefreshBridgeAsync(string bridge) => _client.RefreshBridgeAsync(bridge);
@@ -217,7 +214,6 @@ public sealed class HubViewModel : ObservableObject
         Rss = Fmt.Bytes(m.RssBytes);
         Heap = Fmt.Bytes(m.HeapBytes);
         Cache = $"{m.CacheHits ?? 0} hit / {m.CacheMisses ?? 0} miss";
-        _cacheSize = m.CacheSize ?? 0; _cacheCapacity = m.CacheCapacity ?? 0; Raise(nameof(CacheFill));
         Blocked = m.Blocked ?? 0;
         Dlp = m.DlpRedactions ?? 0;
         ToolCount = m.ToolCount ?? 0;
@@ -347,7 +343,6 @@ public sealed class EventRow
     public bool ToneWarn => Tone == "warn";
     public bool ToneDanger => Tone == "danger";
     public bool ToneIndigo => Tone == "indigo";
-    public string Detail => string.IsNullOrEmpty(Args) ? Preview : $"args: {Args}\n\n{Preview}";
     public bool HasArgs => Args.Length > 0;
     public bool HasPreview => Preview.Length > 0;
     public string RiskText => Risk switch { "ReadOnly" => "read-only", "Mutating" => "mutating", "Destructive" => "destructive", _ => Risk.ToLowerInvariant() };

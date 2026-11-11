@@ -180,6 +180,18 @@ public class RouterTests
     }
 
     [Fact]
+    public async Task Denied_tool_stays_denied_when_the_mode_would_let_it_run()
+    {
+        await using var hub = new HubHarness();
+        hub.Security.Remember("mut", allow: false);
+        hub.Security.Mode = ExecutionMode.Auto; // auto mode has nothing against "ls"
+        var res = await hub.ToolAsync("mut", new JsonObject { ["cmd"] = "ls" });
+        Assert.True(res["isError"]!.GetValue<bool>());
+        Assert.Contains("denied for this session", res["content"]![0]!["text"]!.GetValue<string>(), StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, hub.Mutating.Calls);
+    }
+
+    [Fact]
     public async Task Remembered_deny_blocks_without_asking()
     {
         await using var hub = new HubHarness();

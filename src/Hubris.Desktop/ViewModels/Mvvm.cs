@@ -53,6 +53,9 @@ public sealed class AsyncCommand : ICommand
         _canExecute = canExecute;
     }
 
+    /// <summary>What a command threw; the main view model shows it where the user is looking.</summary>
+    public static event Action<Exception>? Failed;
+
     public event EventHandler? CanExecuteChanged;
     public bool CanExecute(object? parameter) => !_running && (_canExecute?.Invoke() ?? true);
 
@@ -61,7 +64,7 @@ public sealed class AsyncCommand : ICommand
         if (!CanExecute(parameter)) return;
         _running = true; RaiseCanExecuteChanged();
         try { await _execute(); }
-        catch (Exception) { }
+        catch (Exception ex) { Failed?.Invoke(ex); }
         finally { _running = false; RaiseCanExecuteChanged(); }
     }
 

@@ -261,12 +261,19 @@ public sealed class ControlHub : IAsyncDisposable
     /// <summary>Accept privileged commands from any local process (tests, scripts). Off by default.</summary>
     public bool TrustAllClients { get; set; }
 
-    private bool IsTrusted(ControlClient client)
-    {
-        if (TrustAllClients) return true;
-        string? exe = client.PeerPath is null ? null : Path.GetFileNameWithoutExtension(client.PeerPath);
-        return string.Equals(exe, "Hubris.Desktop", StringComparison.Ordinal);
-    }
+    private bool IsTrusted(ControlClient client) => TrustAllClients || IsDesktopApp(client.PeerPath, Environment.ProcessPath);
+
+    /// <summary>Where the desktop app must run from: the hub's own folder (one bundle, one install).</summary>
+    public static string? DesktopPath(string? hubPath)
+        => Path.GetDirectoryName(hubPath) is { Length: > 0 } dir ? Path.Combine(dir, OperatingSystem.IsWindows() ? "Hubris.Desktop.exe" : "Hubris.Desktop") : null;
+
+    /// <summary>
+    /// The whole path is compared, not the file name: a name is free to choose (and ".Desktop" reads as an
+    /// extension, which once made every program called Hubris.Desktop.x pass and the real app fail).
+    /// </summary>
+    public static bool IsDesktopApp(string? peerPath, string? hubPath)
+        => peerPath is not null && DesktopPath(hubPath) is { } expected
+           && string.Equals(Path.GetFullPath(peerPath), expected, OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase);
 
     private async ValueTask OnCommandAsync(ControlClient client, ControlMessage cmd)
     {
@@ -278,7 +285,7 @@ public sealed class ControlHub : IAsyncDisposable
             if (!IsTrusted(client))
             {
                 Log.Warn($"control client {client.Id} (pid {client.PeerPid}, {client.PeerPath ?? "unknown exe"}) is not the desktop app; '{cmd.Type}' refused");
-                Fail(ack, $"'{cmd.Type}' is only accepted from the Hubris desktop app (peer: {client.PeerPath ?? "unknown"}); start the hub with --control-trust-all to allow any local process");
+                Fail(ack, $"'{cmd.Type}' is only accepted from the Hubris desktop app (peer: {client.PeerPath ?? "unknown"}, expected: {DesktopPath(Environment.ProcessPath) ?? "unknown"}); start the hub with --control-trust-all to allow any local process");
                 await client.SendAsync(ack).ConfigureAwait(false);
                 return;
             }
@@ -391,6 +398,7 @@ public sealed class ControlHub : IAsyncDisposable
                     if (string.IsNullOrEmpty(cmd.Bridge)) { Fail(ack, "bridge required"); break; }
                     if (_rt.Auth is null || !_rt.Auth.TryGet(cmd.Bridge, out var provider)) { Fail(ack, $"bridge '{cmd.Bridge}' has no auth block"); break; }
                     if (cmd.Type == ControlTypes.OAuthRevoke) { provider.Revoke(); break; }
+                    if (provider.Info().State == "none" && _rt.Bridge(cmd.Bridge) is { IsAlive: true }) { ack.Text = "the server answers without a sign-in"; break; }
                     if (provider.State == "pending") { Fail(ack, "login already in progress"); break; }
                     // The browser round trip takes as long as the user does; the ack says it started, oauth_changed says how it ended.
                     string bridgeName = cmd.Bridge;

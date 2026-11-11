@@ -74,23 +74,21 @@ public static partial class DangerPatterns
     [GeneratedRegex(@"\brm['""]?\s+(-\w*r\w*f|-\w*f\w*r|-\w*r\w*\s+-\w*f|-\w*f\w*\s+-\w*r|--recursive\s+--force|--force\s+--recursive)\b", Opts, Timeout)]
     public static partial Regex RmRecursiveForce();
 
-    [GeneratedRegex(@"(^|[\s""'=])--force\b|(^|[\s""'])-f\b(?=[^\n]*\bpush\b)", Opts, Timeout)]
-    public static partial Regex ForceFlag();
-
     // git [-C dir] push … --force|-f|+ref, reset --hard, clean -f (any flag order), branch -D, checkout -- ., restore ., stash drop|clear
-    [GeneratedRegex(@"\bgit['""]?\s+(-C\s+\S+\s+)?(push\s+[^\n""]*?(--force\b|-f\b|\+\S)|reset\s+--hard|clean\s+(-\w+\s+)*-\w*f\b|branch\s+-D\b|checkout\s+--\s+\.|restore\s+(-\S+\s+)*\.(\s|$)|stash\s+(drop|clear)\b)", Opts, Timeout)]
+    [GeneratedRegex(@"\bgit['""]?\s+(-C\s+\S+\s+)?(push\b[^\n""]*?(--force\b|\s-f\b|\s\+\S)|reset\s+--hard|clean\s+(-\w+\s+)*-\w*f\b|branch\s+-D\b|checkout\s+--\s+\.|restore\s+(-\S+\s+)*\.(\s|$)|stash\s+(drop|clear)\b)", Opts, Timeout)]
     public static partial Regex GitDestructive();
 
     [GeneratedRegex(@"\b(mkfs(\.\w+)?|dd\s+if=|shred\s|wipefs|diskutil\s+erase|format\s+[a-z]:)", Opts, Timeout)]
     public static partial Regex DiskWipe();
 
-    [GeneratedRegex(@"\|\s*(sudo\s+)?(sh|bash|zsh|python\d?|perl|node)\b", Opts, Timeout)]
+    // something fetched from the network and run: curl … | sh, bash -c "$(curl …)", bash <(curl …)
+    [GeneratedRegex(@"\b(curl|wget)\b[^\n|]*\|\s*(sudo\s+)?(sh|bash|zsh|python\d?|perl|node|ruby)\b|\b(sh|bash|zsh)\s+(-c\s+)?['""]?(\$\(|<\()\s*(curl|wget)\b", Opts, Timeout)]
     public static partial Regex PipeToShell();
 
     [GeneratedRegex(@"\b(chmod\s+-R\s+0?777|chown\s+-R\s+root|:\(\)\s*\{\s*:\|:&\s*\};:)", Opts, Timeout)]
     public static partial Regex PrivilegeAbuse();
 
-    [GeneratedRegex(@"(^|\s)--prod(uction)?\b|\b(terraform|terragrunt)\s+(apply|destroy)\b|\b(pulumi|cdk)\s+destroy\b|\bkubectl\s+(delete|apply|replace|drain)\b|\bhelm\s+(install|upgrade|uninstall|delete|rollback)\b|\b(migrate\s+deploy|db:migrate|alembic\s+upgrade|flyway\s+migrate)\b", Opts, Timeout)]
+    [GeneratedRegex(@"\b(deploy|publish|release|promote|vercel|netlify)\b[^\n]*\s--prod(uction)?\b|\b(terraform|terragrunt)\s+(apply|destroy)\b|\b(pulumi|cdk)\s+destroy\b|\bkubectl\s+(delete|apply|replace|drain)\b|\bhelm\s+(install|upgrade|uninstall|delete|rollback)\b|\b(migrate\s+deploy|db:migrate|alembic\s+upgrade|flyway\s+migrate)\b", Opts, Timeout)]
     public static partial Regex ProductionChange();
 
     [GeneratedRegex(@"\baws\s+s3\s+(rb\b|rm\b[^\n]*--recursive)|\bgsutil\s+(-m\s+)?rm\s+-\w*r|\bgcloud\s+storage\s+rm\b[^\n]*(\s-r\b|--recursive)|\baz\s+storage\s+\S+\s+delete-batch\b", Opts, Timeout)]
@@ -103,8 +101,8 @@ public static partial class DangerPatterns
     [GeneratedRegex(@"(^|\s)(--insecure|--no-sandbox|--dangerously-skip-permissions|--yes-always)\b", Opts, Timeout)]
     public static partial Regex GuardOff();
 
-    // rm with any flag on /, ~, $HOME, their direct globs or a system directory: asked about in every mode, Bypass included
-    [GeneratedRegex(@"\brm['""]?\s+(-[\w-]+\s+)+['""]?(/|~|\$HOME|\$\{HOME\}|/\*|~/\*|\$HOME/\*|/(usr|etc|var|bin|sbin|opt|home|Users|System|Library|Applications)/?\*?)['""]?(\s|$)", RegexOptions.CultureInvariant, Timeout)]
+    // rm with any flag on /, ~, $HOME or a system directory, with or without a trailing slash or glob: asked about in every mode, Bypass included
+    [GeneratedRegex(@"\brm['""]?\s+(-[\w-]+\s+)+['""]?(/|~|\$HOME|\$\{HOME\}|/(usr|etc|var|bin|sbin|opt|home|Users|System|Library|Applications))/?\*?['""]?(\s|$)", Opts, Timeout)]
     public static partial Regex CriticalRemoval();
 
     public readonly record struct Rule(string Name, Regex Pattern);
@@ -114,7 +112,6 @@ public static partial class DangerPatterns
         new("DROP statement", DropStatement()),
         new("TRUNCATE statement", TruncateStatement()),
         new("rm -rf", RmRecursiveForce()),
-        new("--force flag", ForceFlag()),
         new("destructive git", GitDestructive()),
         new("disk wipe", DiskWipe()),
         new("pipe to shell", PipeToShell()),
@@ -132,7 +129,7 @@ public static partial class DangerPatterns
     /// </summary>
     private static readonly (string Category, string[] Verbs)[] NameRules =
     [
-        ("irreversible deletion", ["delete", "destroy", "drop", "purge", "wipe", "erase", "truncate", "terminate", "reset", "uninstall"]),
+        ("irreversible deletion", ["delete", "destroy", "purge", "wipe", "erase", "truncate", "terminate", "reset", "uninstall"]),
         ("production deploy or migration", ["deploy", "redeploy", "promote", "rollback", "migrate", "migration", "merge"]),
         ("permission grant", ["grant", "invite", "authorize", "permission", "permissions", "collaborator", "iam"]),
         ("secrets, DNS, certificates or firewall", ["secret", "secrets", "dns", "cert", "certificate", "firewall"]),
@@ -305,10 +302,13 @@ public sealed class SecurityInterceptor
         return SecurityVerdict.Blocked($"{AutoBlockedPrefix} Tool='{toolName}' Matched: {matched}. {next}", patternHit: hits is not null, ask: ask);
     }
 
+    private static readonly string Home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
     private static bool IsCriticalRemoval(JsonObject? arguments)
     {
         string text = ScanText(arguments);
         if (text.Length == 0) return false;
+        if (Home.Length > 1) text = text.Replace(Home, "~", StringComparison.OrdinalIgnoreCase); // the home folder spelled out is still the home folder
         try { return DangerPatterns.CriticalRemoval().IsMatch(text); }
         catch (RegexMatchTimeoutException) { return false; } // too large to judge here; the mode's own scan treats a timeout as a hit
     }

@@ -48,6 +48,8 @@ pl, _ = rpc({"jsonrpc":"2.0","id":94,"method":"prompts/list"})
 check([p["name"] for p in pl["result"]["prompts"]] == ["py__greet"], "prompts/list carries the bridge prefix")
 pg, _ = rpc({"jsonrpc":"2.0","id":95,"method":"prompts/get","params":{"name":"py__greet","arguments":{"who":"hub"}}})
 check(pg["result"]["messages"][0]["content"]["text"] == "hi hub", "prompts/get strips the prefix and forwards arguments")
+pg, _ = rpc({"jsonrpc":"2.0","id":96,"method":"prompts/get","params":{"name":"py__greet","arguments":{"who":"token=abcdef0123456789abcdef"}}})
+check("abcdef0123456789abcdef" not in pg["result"]["messages"][0]["content"]["text"], "prompts/get masks secrets like tool results")
 
 # --- audit #1: a malformed notification must not kill the server
 hub.stdin.write('{"jsonrpc":"2.0","method":"notifications/cancelled","params":"oops"}\n'); hub.stdin.flush()
@@ -170,7 +172,7 @@ check(not res["result"].get("isError"), "auto: a tool that only declares destruc
 blocked = []
 for i in range(3):
     call_async(131 + i, "py__shell", {"cmd": "git push --force"}); blocked.append(read_response(131 + i))
-check(all(b["result"]["isError"] and "[AUTO MODE BLOCKED]" in b["result"]["content"][0]["text"] and "--force" in b["result"]["content"][0]["text"] for b in blocked),
+check(all(b["result"]["isError"] and "[AUTO MODE BLOCKED]" in b["result"]["content"][0]["text"] and "destructive git" in b["result"]["content"][0]["text"] for b in blocked),
       "auto: three dangerous calls return the matched rule at once, no approval request")
 call_async(134, "py__shell", {"cmd": "git push --force"})
 req134, _ = recv("approval_request")
@@ -237,15 +239,16 @@ res = read_response(40)
 check(res["result"]["isError"] and time.time()-t0 < 2 and "UI disconnected" in res["result"]["content"][0]["text"], f"pending approval failed {time.time()-t0:.1f}s after UI disconnect")
 sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); sock.connect(desc["socket"]); f = sock.makefile("r"); recv("hello")
 
-# --- audit #9: a crashed bridge stops advertising its tools
+# --- a crashed bridge keeps its tools and is started again by the next call
 import signal
 for line in subprocess.run(["ps", "-ax", "-o", "pid=,command="], capture_output=True, text=True).stdout.splitlines():
     if ECHO in line and "--child-flag" in line and "--stdio" not in line:  # only *our* child; the hub's own command line also names the script
         os.kill(int(line.split()[0]), signal.SIGKILL)
-tc, _ = recv("tools_changed", timeout=10)
-check(not [t for t in tc["tools"] if t["name"].startswith("py__")], "bridge exit -> tools_changed without py__ tools")
-lst, _ = rpc({"jsonrpc":"2.0","id":41,"method":"tools/list"})
-check(not [t for t in lst["result"]["tools"] if t["name"].startswith("py__")], "tools/list no longer contains bridge tools")
+time.sleep(0.6)
+send({"type":"list_tools"}); tc, _ = recv("tools_changed", timeout=10)
+check([t for t in tc["tools"] if t["name"].startswith("py__")], "bridge exit -> its tools stay listed")
+call_async(41, "py__peek", {"what": "back"}); res = read_response(41)
+check(res["result"]["content"][0]["text"].startswith("echo:peek"), "the next call started the crashed bridge again")
 
 # --- shutdown via control
 send({"type":"shutdown"})
@@ -283,6 +286,12 @@ r = rpc2({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"mcp_exe
 check(r["result"]["content"][0]["text"].startswith("echo:peek"), "first bridged call spawned the child and answered")
 t = rpc2({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"hub_status"}})["result"]["content"][0]["text"]
 check("bridges=1 (1 running)" in t, "bridge running after the lazy start")
+# the child dies: its tools stay and the next call starts a new one
+kids = subprocess.run(["pgrep", "-P", str(hub2.pid)], capture_output=True, text=True).stdout.split()
+for k in kids: os.kill(int(k), 9)
+time.sleep(0.6)
+r = rpc2({"jsonrpc":"2.0","id":40,"method":"tools/call","params":{"name":"py__peek","arguments":{"what":"again"}}})
+check(len(kids) == 1 and r["result"]["content"][0]["text"].startswith("echo:peek"), "a bridge child that was killed is started again by the next call")
 # clear_cache over the control socket: entries dropped and rebuilt, tools still present
 d2 = os.path.join(RUN, f"{hub2.pid}.json")
 desc2 = json.load(open(d2))

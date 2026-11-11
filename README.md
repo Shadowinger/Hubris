@@ -53,9 +53,12 @@ client ──stdio──▶ Hubris ──stdio──▶ bridge 1 (npx …)
   key names (url, transport and header names for a remote server), with a TTL (`--cache-ttl`, default 24 h).
   On the next start the definitions are served from the cache; the child process is only started, or the
   remote session only opened, on the first real call to one of its tools.
+  A child that exits is started again by the next call; after four exits in a row without an answer its tools
+  are withdrawn until Clear cache or a restart.
 - **Remote servers.** A bridge with a `url` instead of a `command` is reached over HTTP: Streamable HTTP
   (POST per message, JSON or event-stream answers, `Mcp-Session-Id`) by default, the older HTTP+SSE pair with
-  `"transport": "sse"`. Headers from the config go on every request, so a bearer token or API key works;
+  `"transport": "sse"` (its announced endpoint must be on the server's own origin). Answers are capped at
+  64 MB, like a child's lines. Headers from the config go on every request, so a bearer token or API key works;
   an expired session is reopened on the next call, and the server's tools stay listed in between.
   A server that answers 401 without an auth block fails the call with a hint to add a header or an auth block.
 - **OAuth.** A bridge with `"auth": { "type": "oauth" }` signs in through the browser: Hubris discovers the
@@ -91,9 +94,11 @@ client ──stdio──▶ Hubris ──stdio──▶ bridge 1 (npx …)
   the default branch is allowed; force push is not. A blocked call is not put in front of you: it returns
   `[AUTO MODE BLOCKED]` with the rule it matched, so the model takes another route. After 3 blocked calls in
   a row or 20 in total the next blocked call waits for Approve / Deny, and an approval lets auto mode decide
-  alone again. A tool allowed with "Remember for this session" is no longer blocked by its name.
+  alone again. A tool allowed with "Remember for this session" is no longer blocked by its name, and a tool
+  denied that way stays denied in Safe and Auto mode alike.
 - **Bypass mode** (`--mode=bypass`). No checks and no prompts. The one exception, as in Claude Code: `rm` on
-  `/`, the home directory or a system directory still waits for approval, in Auto mode too.
+  `/`, the home directory (as `~`, `$HOME` or spelled out) or a system directory still waits for approval,
+  in Auto mode too.
 - **DLP.** Tool output is scanned for API keys and `key=value` / `"key": "value"` secrets (password, token,
   secret, api key and the like, also as `DATABASE_PASSWORD=`), bearer tokens and JWTs, private keys, Slack
   tokens, card numbers (Luhn-checked), IBANs (mod-97-checked) and Czech birth numbers written with a slash;
@@ -144,7 +149,7 @@ Bridges live in `~/.hubris/config.json` (mode 0600):
 The desktop configurator has a "Known remote servers" list: 54 servers from the Claude connector directory
 (`catalog/remote-servers.json`, Notion, Linear, Atlassian, Stripe, Slack, Figma, Supabase and so on), each added
 to `config.json` with one click as a URL bridge with an OAuth block; running hubs load it at once and one of
-them opens the browser sign-in right away. The search box next to it queries the public
+them opens the browser sign-in right away, unless the server already answers without one. The search box next to it queries the public
 registry at registry.modelcontextprotocol.io and lists every entry that has a remote endpoint.
 
 An `auth` block takes `provider` (secret-store account, default the bridge name; two bridges naming the same
@@ -172,10 +177,12 @@ The control socket is `~/.hubris/run/<pid>.sock`; the desktop app finds running 
 following commands are available over it: `get_status`, `list_tools`, `set_mode`, `approve`, `deny`, `forget`,
 `list_decisions`, `reveal`, `lock`, `clear_cache`, `reload_config`, `cache_maintain`, `shutdown`, `oauth_start`,
 `oauth_revoke`. The socket is 0600, and the commands that change what the hub does (mode, approvals, locks,
-cache, config, OAuth, shutdown) are accepted only from a peer process whose executable is `Hubris.Desktop`,
-as the kernel reports it; the bridges and shell tools the hub itself runs are the same user, so a plain
-`nc -U` from a tool call is refused. `--control-trust-all` lifts that for tests and scripts. A same-user
-attacker who can inject code into the desktop app still wins; that is the limit of a local gateway.
+cache, config, OAuth, shutdown) are accepted only from the `Hubris.Desktop` binary in the hub's own folder
+(the same bundle or install), compared by the full path the kernel reports for the peer; the bridges and
+shell tools the hub itself runs are the same user, so a plain `nc -U` from a tool call, or a program that is
+merely named like the app, is refused. `--control-trust-all` lifts that for tests, scripts and a desktop app
+run from another folder. A same-user attacker who can replace that binary or inject code into it still wins;
+that is the limit of a local gateway.
 `HUBRIS_HOME` moves the whole state directory.
 
 ## Desktop app
@@ -202,7 +209,7 @@ tests/run.sh                        # unit tests, warning-free AOT publish, e2e 
 dotnet test tests/Hubris.Tests      # unit tests only
 ```
 
-176 xUnit tests and 85 end-to-end checks (`tests/e2e/control_test.py` drives a published binary with a Python
+201 xUnit tests and 87 end-to-end checks (`tests/e2e/control_test.py` drives a published binary with a Python
 stdio echo server as bridge, `tests/e2e/http_test.py` with a Python Streamable HTTP server). Both projects publish with `TreatWarningsAsErrors` and zero IL/AOT warnings.
 
 ## Layout
@@ -221,4 +228,4 @@ brand/               icon, mark, wordmark
 
 CI runs the unit tests, the warning-free Native AOT publish and the e2e suites on macOS, Ubuntu and Windows (the
 control-socket suite skips Windows, where CPython has no AF_UNIX). The desktop app is used on macOS only.
-Version 1.3.0. MIT license.
+Version 1.4.0. MIT license.

@@ -31,7 +31,7 @@ public sealed class HubRuntime
     public McpBridge? Bridge(string name) { foreach (var b in Bridges) if (b.Name == name) return b; return null; }
     public int BridgeCount => Bridges.Count;
     public int BridgesRunning { get { int n = 0; foreach (var b in Bridges) if (b.IsAlive) n++; return n; } }
-    public const string Version = "1.3.0";
+    public const string Version = "1.4.0";
 }
 
 public sealed class ToolRegistry

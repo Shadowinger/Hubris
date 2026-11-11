@@ -67,11 +67,18 @@ public static class OAuthPkceFlow
 
         string authz = meta?.AuthorizationEndpoint ?? issuer + "/authorize";
         string token = meta?.TokenEndpoint ?? issuer + "/token";
+        // The server chooses these, and the first one is handed to the system's "open": nothing but a web address may pass.
+        foreach (var (what, url) in new[] { ("authorization", authz), ("token", token), ("registration", meta?.RegistrationEndpoint) })
+            if (url is not null && !IsWebUrl(url)) throw new OAuthException($"the server's {what} endpoint is not an https address: {Trim(url)}");
         var scopes = new List<string>(prm?.ScopesSupported ?? []);
         if (meta?.ScopesSupported?.Contains("offline_access") == true && !scopes.Contains("offline_access")) scopes.Add("offline_access");
         string? scope = scopes.Count > 0 ? string.Join(' ', scopes) : null;
         return new OAuthEndpoints(authz, token, meta?.RegistrationEndpoint, prm?.Resource ?? resource, scope);
     }
+
+    /// <summary>https anywhere; plain http only to this machine.</summary>
+    public static bool IsWebUrl(string url)
+        => Uri.TryCreate(url, UriKind.Absolute, out var u) && (u.Scheme == Uri.UriSchemeHttps || (u.Scheme == Uri.UriSchemeHttp && u.IsLoopback));
 
     private static async Task<T?> GetJsonAsync<T>(HttpClient http, string url, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> type, CancellationToken ct) where T : class
     {
@@ -129,8 +136,11 @@ public static class OAuthPkceFlow
         public int Port { get; }
         public string RedirectUri => $"http://127.0.0.1:{Port}/callback";
 
-        /// <summary>Waits for GET /callback and answers it with a page that closes itself. Returns the query string.</summary>
-        public async Task<Dictionary<string, string>> WaitForCallbackAsync(CancellationToken ct)
+        /// <summary>
+        /// Waits for the GET /callback that carries <paramref name="state"/> and answers it with a page that closes itself.
+        /// Anything else that reaches the port (a favicon probe, another page guessing the address) is turned away and the wait goes on.
+        /// </summary>
+        public async Task<Dictionary<string, string>> WaitForCallbackAsync(string state, CancellationToken ct)
         {
             while (true)
             {
@@ -145,6 +155,11 @@ public static class OAuthPkceFlow
                     continue; // a browser's favicon probe must not consume the callback
                 }
                 var query = ParseQuery(target);
+                if (query.GetValueOrDefault("state") != state)
+                {
+                    await WriteAsync(stream, "400 Bad Request", "<p>This is not the sign-in Hubris is waiting for.</p>", ct).ConfigureAwait(false);
+                    continue;
+                }
                 string html = query.ContainsKey("error")
                     ? $"<h2>Hubris: sign-in failed</h2><p>{WebUtility.HtmlEncode(query.GetValueOrDefault("error_description") ?? query["error"])}</p>"
                     : "<h2>Hubris is connected</h2><p>You can close this tab.</p><script>window.close()</script>";

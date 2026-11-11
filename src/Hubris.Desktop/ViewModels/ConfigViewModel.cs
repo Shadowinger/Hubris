@@ -210,12 +210,14 @@ public sealed class ConfigViewModel : ObservableObject
     }
 
     /// <summary>Appends project-level configs under ProjectRoot (depth 4); global rows stay.</summary>
-    private void ScanProjects()
+    private async void ScanProjects()
     {
+        string root = _projectRoot;
+        LastResult = $"Scanning {root}…";
+        var found = await Task.Run(() => ClientConfigScanner.ScanProjects(root)); // thousands of folders under a home directory
         for (int i = Clients.Count - 1; i >= 0; i--) if (Clients[i].Client.Kind.IsProjectLevel) Clients.RemoveAt(i);
-        var found = ClientConfigScanner.ScanProjects(_projectRoot);
         foreach (var c in found) Clients.Add(new DetectedClientRow(c, ImportClient, RestoreClient));
-        LastResult = $"{found.Count} project config(s) under {_projectRoot}.";
+        LastResult = $"{found.Count} project config(s) under {root}.";
         Raise(nameof(NoClients));
     }
 
@@ -284,7 +286,7 @@ public sealed class ConfigViewModel : ObservableObject
             if (n > 0) AppendLog($"asked {n} running hub(s) to reload config.json");
             if (signIn is null) return;
             LastResult = n > 0
-                ? $"✓ {title} added. Finish the sign-in in the browser tab that just opened."
+                ? $"✓ {title} added. If it needs a sign-in, the browser tab is open now."
                 : $"✓ {title} added. No hub is running, so the sign-in could not open: start your MCP client, then press Connect on the hub dashboard.";
             AppendLog(LastResult);
         });
@@ -432,6 +434,12 @@ public sealed class ConfigViewModel : ObservableObject
         if (PickFile is null) return;
         string? file = await PickFile();
         if (!string.IsNullOrEmpty(file)) ServerPath = file;
+    }
+
+    public void ReportError(string text)
+    {
+        LastResult = "✗ " + text;
+        AppendLog(LastResult);
     }
 
     private void AppendLog(string line)

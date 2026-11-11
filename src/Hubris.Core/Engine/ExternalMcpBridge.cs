@@ -30,6 +30,8 @@ public sealed class ExternalMcpBridge : McpBridge
     private Task? _errLoop;
     private long _nextId;
     private int _disposed;
+    private int _exits; // exits in a row with no answered request in between
+    private const int MaxExitsInARow = 3;
 
     private readonly SemaphoreSlim _startLock = new(1, 1);
 
@@ -59,11 +61,11 @@ public sealed class ExternalMcpBridge : McpBridge
 
     public override async Task EnsureStartedAsync(CancellationToken ct)
     {
-        if (_process is not null) return;
+        if (IsAlive) return;
         await _startLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            if (_process is not null) return;
+            if (IsAlive) return; // a child that died is replaced here, the way a remote bridge reconnects
             if (Volatile.Read(ref _disposed) == 1) throw new McpBridgeException(JsonRpcErrorCodes.InternalError, $"bridge '{Name}' disposed");
             await StartProcessAsync(ct).ConfigureAwait(false);
         }
@@ -177,7 +179,9 @@ public sealed class ExternalMcpBridge : McpBridge
                 w.WriteEndObject();
             }, timeoutCts.Token).ConfigureAwait(false); // a child that stopped reading must not hold the write (and the writer lock) forever
 
-            return await tcs.Task.ConfigureAwait(false);
+            var answer = await tcs.Task.ConfigureAwait(false);
+            Volatile.Write(ref _exits, 0);
+            return answer;
         }
         finally
         {
@@ -325,12 +329,26 @@ public sealed class ExternalMcpBridge : McpBridge
 
     private void OnExited(object? sender, EventArgs e)
     {
+        var exited = sender as Process;
         int code = -1;
-        try { code = _process?.ExitCode ?? -1; } catch (InvalidOperationException) { }
+        try { code = exited?.ExitCode ?? -1; } catch (InvalidOperationException) { }
         FailAllPending($"bridge '{Name}' exited with code {code}");
-        if (Volatile.Read(ref _disposed) == 0)
+        if (Volatile.Read(ref _disposed) == 1 || exited is null) return;
+        Log.Warn($"bridge '{Name}' exited with code {code}");
+
+        // Forget the dead child; its tools stay listed and the next call starts a new one. A child that keeps
+        // dying without answering anything is given up on, and its tools are withdrawn as before.
+        bool giveUp = Interlocked.Increment(ref _exits) > MaxExitsInARow;
+        exited.Exited -= OnExited;
+        var stdin = Interlocked.CompareExchange(ref _process, null, exited) == exited ? Interlocked.Exchange(ref _stdin, null) : null; // else a new child already owns the fields
+        _ = Task.Run(async () =>
         {
-            Log.Warn($"bridge '{Name}' exited with code {code}");
+            if (stdin is not null) { try { await stdin.DisposeAsync().ConfigureAwait(false); } catch (Exception ex) when (ex is IOException or ObjectDisposedException) { Log.Debug($"bridge '{Name}' stdin: {ex.Message}"); } }
+            exited.Dispose();
+        }, CancellationToken.None);
+        if (giveUp)
+        {
+            Log.Warn($"bridge '{Name}' exited {MaxExitsInARow + 1} times in a row; its tools are withdrawn (Clear cache in the desktop app tries again)");
             RaiseExited();
         }
     }

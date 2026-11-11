@@ -174,13 +174,13 @@ public sealed class OAuthTokenProvider
 
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
             deadline.CancelAfter(TimeSpan.FromMinutes(5));
-            var query = await listener.WaitForCallbackAsync(deadline.Token).ConfigureAwait(false);
+            var query = await listener.WaitForCallbackAsync(state, deadline.Token).ConfigureAwait(false);
             if (query.TryGetValue("error", out var error)) throw new OAuthException($"authorization refused: {error} {query.GetValueOrDefault("error_description")}".TrimEnd());
-            if (query.GetValueOrDefault("state") != state) throw new OAuthException("redirect state does not match (wrong or replayed callback)");
             if (!query.TryGetValue("code", out var code) || code.Length == 0) throw new OAuthException("redirect carried no authorization code");
 
             var tr = await OAuthPkceFlow.ExchangeCodeAsync(_http, ep.TokenEndpoint, code, verifier, listener.RedirectUri, clientId, clientSecret, ep.Resource, ct).ConfigureAwait(false);
-            _store.Set(Provider, new StoredToken
+            // Under the refresh lock: another hub's failed refresh of the old grant must not land on top of this.
+            using (await LockAcrossProcessesAsync(ct).ConfigureAwait(false)) _store.Set(Provider, new StoredToken
             {
                 AccessToken = tr.AccessToken!,
                 RefreshToken = tr.RefreshToken,
@@ -258,7 +258,15 @@ public sealed class OAuthDelegatingHandler : DelegatingHandler
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
-        string token = await _provider.GetAccessTokenAsync(ct).ConfigureAwait(false) ?? throw new Engine.NotSignedInException(_provider.Bridge);
+        string? token = await _provider.GetAccessTokenAsync(ct).ConfigureAwait(false);
+        if (token is null)
+        {
+            // No sign-in yet, and many servers need none: ask without a token. Only a 401 means the user has to press Connect.
+            var open = await base.SendAsync(request, ct).ConfigureAwait(false);
+            if (open.StatusCode != System.Net.HttpStatusCode.Unauthorized) return open;
+            open.Dispose();
+            throw new Engine.NotSignedInException(_provider.Bridge);
+        }
         request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
         var response = await base.SendAsync(request, ct).ConfigureAwait(false);
         if (response.StatusCode != System.Net.HttpStatusCode.Unauthorized) return response;

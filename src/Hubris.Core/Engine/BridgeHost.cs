@@ -49,11 +49,12 @@ public sealed class BridgeHost
             await RefreshExtrasAsync(_rt, bridge, ct).ConfigureAwait(false);
             return bridge;
         }
-        catch (NotSignedInException)
+        catch (Exception ex) when (ex is NotSignedInException || (spec.Auth is not null && ex is HttpRequestException or TimeoutException or IOException))
         {
-            // Keep it, without tools: after Connect the control hub lists it (RefreshBridgeAsync).
+            // Keep it, without tools: after Connect the control hub lists it (RefreshBridgeAsync). An OAuth bridge also
+            // keeps its place when its server could not be reached, or Connect would have nothing to sign in to.
             _rt.Bridges.Enqueue(bridge);
-            Log.Warn($"bridge '{spec.Name}' waits for sign-in; its tools appear after Connect in the desktop app");
+            Log.Warn($"bridge '{spec.Name}' waits for sign-in ({ex.Message}); its tools appear after Connect in the desktop app");
             return bridge;
         }
         catch (Exception ex)

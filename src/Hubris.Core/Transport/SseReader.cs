@@ -12,6 +12,32 @@ public sealed class SseReader
 
     public static IAsyncEnumerable<(string Event, string Data)> ReadAsync(Stream stream, CancellationToken ct) => new SseReader(stream).ReadAsync(ct);
 
+    private readonly char[] _buf = new char[16 * 1024];
+    private int _pos, _len;
+
+    /// <summary>StreamReader.ReadLineAsync without its blind spot: a line that never ends is cut off at the cap instead of filling memory.</summary>
+    private async ValueTask<string?> ReadLineAsync(CancellationToken ct)
+    {
+        StringBuilder? sb = null;
+        while (true)
+        {
+            if (_pos == _len)
+            {
+                _len = await _reader.ReadAsync(_buf.AsMemory(), ct).ConfigureAwait(false);
+                _pos = 0;
+                if (_len == 0) return sb?.ToString(); // end of stream: what is left of the last line, or null
+            }
+            int nl = Array.IndexOf(_buf, '\n', _pos, _len - _pos);
+            int end = nl < 0 ? _len : nl;
+            (sb ??= new StringBuilder()).Append(_buf, _pos, end - _pos);
+            if (sb.Length > JsonLines.DefaultMaxLine) throw new InvalidDataException($"line longer than {JsonLines.DefaultMaxLine} bytes");
+            _pos = nl < 0 ? _len : nl + 1;
+            if (nl < 0) continue;
+            if (sb.Length > 0 && sb[^1] == '\r') sb.Length--;
+            return sb.ToString();
+        }
+    }
+
     public async IAsyncEnumerable<(string Event, string Data)> ReadAsync([EnumeratorCancellation] CancellationToken ct)
     {
         string eventName = "message";
@@ -19,7 +45,8 @@ public sealed class SseReader
         bool pending = false;
         while (true)
         {
-            string? line = await _reader.ReadLineAsync(ct).ConfigureAwait(false);
+            string? line = await ReadLineAsync(ct).ConfigureAwait(false);
+            if (data.Length > JsonLines.DefaultMaxLine) throw new InvalidDataException($"event larger than {JsonLines.DefaultMaxLine} bytes");
             if (line is null)
             {
                 if (pending) yield return (eventName, data.ToString());

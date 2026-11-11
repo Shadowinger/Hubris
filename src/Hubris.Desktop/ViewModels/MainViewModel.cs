@@ -30,6 +30,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ShowConfigCommand = new RelayCommand(() => { SelectedHub = null; ShowCatalog = false; ShowConfig = true; });
         ShowCatalogCommand = new RelayCommand(() => { SelectedHub = null; ShowConfig = false; ShowCatalog = true; });
         RescanCommand = new AsyncCommand(() => _discovery.RescanAsync());
+        AsyncCommand.Failed += ex => Dispatcher.UIThread.Post(() =>
+        {
+            if (SelectedHub is { } hub) hub.ReportError(ex.Message); else Config.ReportError(ex.Message);
+        });
         Hubs.CollectionChanged += (_, _) => { Raise(nameof(HasHubs)); Raise(nameof(NoHubs)); RaisePending(); };
     }
 

@@ -216,13 +216,16 @@ public sealed class McpRouter
 
         // Same DLP as tool results: the model must not see secrets through a resource either.
         if (result is JsonObject o && o["contents"] is JsonArray contents)
-            foreach (var c in contents)
-                if (c is JsonObject co && co["text"] is JsonValue tv && tv.TryGetValue<string>(out var text) && text.Length > 0)
-                {
-                    string clean = DlpSanitizer.Sanitize(text);
-                    if (!ReferenceEquals(clean, text)) co["text"] = clean;
-                }
+            foreach (var c in contents) MaskText(c);
         await _transport.SendResultAsync(msg.Id, result ?? new JsonObject(), McpJsonContext.Default.JsonNode, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Masks secrets in the text of one content object, the way tool results are masked.</summary>
+    private static void MaskText(JsonNode? content)
+    {
+        if (content is not JsonObject o || o["text"] is not JsonValue tv || !tv.TryGetValue<string>(out var text) || text.Length == 0) return;
+        string clean = DlpSanitizer.Sanitize(text);
+        if (!ReferenceEquals(clean, text)) o["text"] = clean;
     }
 
     private async Task HandlePromptGetAsync(JsonRpcMessage msg, CancellationToken ct)
@@ -241,6 +244,9 @@ public sealed class McpRouter
         catch (McpBridgeException ex) { await _transport.SendErrorAsync(msg.Id, ex.Code, ex.Message, null, ct).ConfigureAwait(false); return; }
         catch (Exception ex) when (ex is TimeoutException or HttpRequestException or IOException)
         { await _transport.SendErrorAsync(msg.Id, JsonRpcErrorCodes.InternalError, $"bridge '{bridge.Name}': {ex.Message}", null, ct).ConfigureAwait(false); return; }
+        if (result is JsonObject po && po["messages"] is JsonArray messages)
+            foreach (var m in messages)
+                if (m is JsonObject mo && mo["content"] is JsonObject content) { MaskText(content); MaskText(content["resource"]); }
         await _transport.SendResultAsync(msg.Id, result ?? new JsonObject(), McpJsonContext.Default.JsonNode, ct).ConfigureAwait(false);
     }
 
@@ -323,6 +329,13 @@ public sealed class McpRouter
 
         string outcome = "ok";
         bool bridged = tool is BridgedTool;
+        // "Deny for this session" holds whatever the mode would say about the call; only Bypass, which checks nothing, ignores it.
+        if (_security.Mode != ExecutionMode.Bypass && _security.DecisionFor(tool.Name) == false)
+        {
+            var refused = CallToolResult.Error($"Tool '{tool.Name}' is denied for this session (decided in the Hubris desktop app).");
+            _control?.EmitToolCall(callId, tool.Name, tool.RiskLevel, "denied", 0, args, refused);
+            return refused;
+        }
         var verdict = _security.Evaluate(tool.Name, tool.RiskLevel, args, bridged);
         if (!verdict.Allowed)
         {

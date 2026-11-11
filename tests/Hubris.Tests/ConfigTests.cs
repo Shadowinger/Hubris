@@ -38,6 +38,19 @@ public class ConfigTests : IDisposable
     }
 
     [Fact]
+    public void Scan_skips_a_config_it_cannot_use_instead_of_throwing()
+    {
+        Write(".claude.json", """{ "mcpServers": { "a": { "command": "x" }, "a": { "command": "y" } } }"""); // the same key twice
+        Assert.Empty(ClientConfigScanner.Scan(workspaceDir: null, home: _home, appData: _home));
+
+        if (OperatingSystem.IsWindows()) return;
+        Write(".claude.json", """{ "mcpServers": { "a": { "command": "x" } } }""");
+        File.SetUnixFileMode(Path.Combine(_home, ".claude.json"), UnixFileMode.None); // not readable
+        try { Assert.Empty(ClientConfigScanner.Scan(workspaceDir: null, home: _home, appData: _home)); }
+        finally { File.SetUnixFileMode(Path.Combine(_home, ".claude.json"), UnixFileMode.UserRead | UnixFileMode.UserWrite); }
+    }
+
+    [Fact]
     public void Scanner_finds_clients_and_skips_hubris_entries()
     {
         Write(Path.GetRelativePath(_home, ClientConfigScanner.ClaudeDesktopPath(_home, _home)), """

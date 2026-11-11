@@ -127,6 +127,8 @@ public static class ClientConfigScanner
         }
         catch (JsonException ex) { Log.Warn($"{kind.Name} config {path} is not valid JSON: {ex.Message}"); }
         catch (IOException ex) { Log.Warn($"{kind.Name} config {path} unreadable: {ex.Message}"); }
+        catch (UnauthorizedAccessException ex) { Log.Warn($"{kind.Name} config {path} unreadable: {ex.Message}"); }
+        catch (ArgumentException ex) { Log.Warn($"{kind.Name} config {path} names a key twice: {ex.Message}"); } // JsonObject refuses duplicate keys when first read
     }
 
     public static DetectedClient? Parse(ClientKind kind, string path)

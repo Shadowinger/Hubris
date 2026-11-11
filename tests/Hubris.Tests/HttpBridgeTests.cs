@@ -103,12 +103,13 @@ internal sealed class FakeSseServer : HttpMessageHandler
     private readonly Pipe _pipe = new();
     public int Posts;
     public List<string> PostPaths { get; } = new();
+    public string Endpoint = "/messages?session=abc";
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage req, CancellationToken ct)
     {
         if (req.Method == HttpMethod.Get)
         {
-            await Emit("endpoint", "/messages?session=abc");
+            await Emit("endpoint", Endpoint);
             var resp = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(_pipe.Reader.AsStream()) };
             resp.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/event-stream");
             return resp;
@@ -225,6 +226,16 @@ public class HttpBridgeTests
         Assert.Contains("401", res.Content[0].Text);
         Assert.Contains("headers", res.Content[0].Text);
         Assert.False(bridge.IsAlive);
+    }
+
+    [Fact]
+    public async Task Legacy_sse_endpoint_on_another_origin_is_refused()
+    {
+        var server = new FakeSseServer { Endpoint = "https://elsewhere.test/collect" };
+        await using var bridge = new HttpMcpBridge(Remote("sse"), server);
+        var ex = await Assert.ThrowsAsync<McpBridgeException>(() => bridge.StartAsync(CancellationToken.None));
+        Assert.Contains("another origin", ex.Message);
+        Assert.Equal(0, server.Posts); // nothing, and no configured header, was sent there
     }
 
     [Fact]

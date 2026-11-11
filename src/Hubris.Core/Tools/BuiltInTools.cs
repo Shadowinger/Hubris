@@ -262,8 +262,25 @@ public sealed class GitSmartStatusTool : IMcpTool
 
 // ============================================================================ fs_read_head
 
-public sealed class FsReadHeadTool : IMcpTool
+public sealed partial class FsReadHeadTool : IMcpTool
 {
+    [System.Runtime.InteropServices.LibraryImport("libc", SetLastError = true, StringMarshalling = System.Runtime.InteropServices.StringMarshalling.Utf8)]
+    private static partial int open(string path, int flags);
+
+    /// <summary>
+    /// A plain open() of a named pipe waits for a writer that may never come. Opened non-blocking it returns at once,
+    /// and the CanSeek check turns the pipe away; for a regular file the flag changes nothing.
+    /// </summary>
+    private static FileStream OpenForRead(string path)
+    {
+        if (OperatingSystem.IsWindows())
+            return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 16 * 1024, FileOptions.SequentialScan | FileOptions.Asynchronous);
+        int fd = open(path, OperatingSystem.IsMacOS() ? 0x4 | 0x1000000 : 0x800 | 0x80000); // O_RDONLY | O_NONBLOCK | O_CLOEXEC on macOS, else Linux
+        if (fd >= 0) return new FileStream(new Microsoft.Win32.SafeHandles.SafeFileHandle(fd, ownsHandle: true), FileAccess.Read, 16 * 1024);
+        int errno = System.Runtime.InteropServices.Marshal.GetLastPInvokeError();
+        throw errno == 13 ? new UnauthorizedAccessException($"Access to the path '{path}' is denied.") : new IOException($"cannot open '{path}' (errno {errno})");
+    }
+
     public FsReadHeadTool(bool pinned) => Pinned = pinned;
 
     public string Name => "fs_read_head";
@@ -331,7 +348,7 @@ public sealed class FsReadHeadTool : IMcpTool
 
         try
         {
-            await using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 16 * 1024, FileOptions.SequentialScan | FileOptions.Asynchronous);
+            await using var fs = OpenForRead(path);
             if (!fs.CanSeek) return CallToolResult.Error($"Not a regular file: {path}");
 
             // Binary sniff on the first 8 KiB (fixed size: devices report Length 0 but still produce bytes).

@@ -180,6 +180,7 @@ public sealed class HttpMcpBridge : McpBridge
             throw new McpBridgeException(JsonRpcErrorCodes.InternalError, $"bridge '{Name}': event stream ended before the answer to {id}");
         }
 
+        await resp.Content.LoadIntoBufferAsync(JsonLines.DefaultMaxLine, ct).ConfigureAwait(false); // the cap a child's line has
         byte[] bytes = await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
         foreach (var msg in ParseMessages(bytes))
         {
@@ -203,6 +204,7 @@ public sealed class HttpMcpBridge : McpBridge
                 await ThrowOnFailureAsync(resp, ct).ConfigureAwait(false);
                 if (resp.StatusCode != HttpStatusCode.Accepted && resp.StatusCode != HttpStatusCode.NoContent)
                 {
+                    await resp.Content.LoadIntoBufferAsync(JsonLines.DefaultMaxLine, ct).ConfigureAwait(false);
                     byte[] bytes = await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
                     foreach (var msg in ParseMessages(bytes)) await DispatchAsync(msg).ConfigureAwait(false);
                 }
@@ -281,6 +283,7 @@ public sealed class HttpMcpBridge : McpBridge
         string detail = string.Empty;
         try
         {
+            await resp.Content.LoadIntoBufferAsync(64 * 1024, ct).ConfigureAwait(false);
             string text = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             if (text.Length > 0) detail = ": " + (text.Length > 200 ? text[..200] : text).ReplaceLineEndings(" ");
         }
@@ -328,7 +331,10 @@ public sealed class HttpMcpBridge : McpBridge
             {
                 if (string.Equals(name, "endpoint", StringComparison.Ordinal))
                 {
-                    endpoint.TrySetResult(new Uri(_url, data.Trim()));
+                    // Every later request, with the configured headers, goes where this says: only the server's own origin is accepted.
+                    var target = new Uri(_url, data.Trim());
+                    if (Uri.Compare(target, _url, UriComponents.SchemeAndServer, UriFormat.Unescaped, StringComparison.OrdinalIgnoreCase) == 0) endpoint.TrySetResult(target);
+                    else endpoint.TrySetException(new McpBridgeException(JsonRpcErrorCodes.InternalError, $"bridge '{Name}': the server named an endpoint on another origin ({target.GetLeftPart(UriPartial.Authority)}); refused"));
                     continue;
                 }
                 foreach (var msg in ParseMessages(data)) await DispatchAsync(msg).ConfigureAwait(false);
