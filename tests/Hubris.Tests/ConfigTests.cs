@@ -139,6 +139,34 @@ public class ConfigTests : IDisposable
     }
 
     [Fact]
+    public void Second_restore_keeps_a_copy_of_the_file_it_replaces()
+    {
+        string path = Write(".claude.json", """{ "mcpServers": { "a": { "command": "x" } }, "numStartups": 1 }""");
+        var client = ClientConfigScanner.Parse(ClientConfigScanner.ClaudeCode, path)!;
+        ClientConfigHijacker.Hijack(client, "/opt/Hubris", ["--stdio"]);
+        Assert.EndsWith("claude_mcp_snapshot.json", ClientConfigHijacker.Restore(client)); // the snapshot is used up here
+
+        // Weeks later the client has written new state, and Restore is pressed once more: only the whole-file backup is left.
+        var root = (JsonObject)JsonNode.Parse(File.ReadAllText(path))!;
+        root["numStartups"] = 99;
+        File.WriteAllText(path, root.ToJsonString());
+        Thread.Sleep(5); // backup names carry the time in milliseconds
+        Assert.Contains(".bak-", ClientConfigHijacker.Restore(client));
+        Assert.Equal(1, JsonNode.Parse(File.ReadAllText(path))!["numStartups"]!.GetValue<int>()); // rolled back to takeover day
+        Assert.Equal(99, JsonNode.Parse(File.ReadAllText(ClientConfigHijacker.LatestBackup(path)!))!["numStartups"]!.GetValue<int>()); // and nothing is lost
+    }
+
+    [Fact]
+    public void Only_the_newest_backups_of_a_file_are_kept()
+    {
+        string path = Write("cursor.json", "{}");
+        string last = "";
+        for (int i = 0; i < ClientConfigHijacker.KeptBackups + 3; i++) { File.WriteAllText(path, $$"""{ "n": {{i}} }"""); last = ClientConfigHijacker.Backup(path); Thread.Sleep(5); }
+        Assert.Equal(ClientConfigHijacker.KeptBackups, Directory.GetFiles(Path.Combine(_home, "backups"), "*.bak-*").Length);
+        Assert.Equal(last, ClientConfigHijacker.LatestBackup(path));
+    }
+
+    [Fact]
     public void Vscode_hijack_uses_servers_key_and_stdio_type()
     {
         string path = Write(Path.Combine("ws", ".vscode", "mcp.json"), """{ "servers": { "a": { "type": "stdio", "command": "x" } } }""");

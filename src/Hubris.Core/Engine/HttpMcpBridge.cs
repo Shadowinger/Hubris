@@ -112,7 +112,7 @@ public sealed class HttpMcpBridge : McpBridge
 
     protected override async Task<JsonNode?> SendRequestAsync(string method, JsonNode? parameters, CancellationToken ct, TimeSpan timeout)
     {
-        if (!IsAlive) throw new McpBridgeException(JsonRpcErrorCodes.InternalError, $"bridge '{Name}' is not connected");
+        await EnsureStartedAsync(ct).ConfigureAwait(false); // another call may be reconnecting right now: wait for it instead of failing
         try
         {
             return await SendRequestCoreAsync(method, parameters, ct, timeout).ConfigureAwait(false);
@@ -128,16 +128,7 @@ public sealed class HttpMcpBridge : McpBridge
     private async Task<JsonNode?> SendRequestCoreAsync(string method, JsonNode? parameters, CancellationToken ct, TimeSpan timeout)
     {
         var id = RpcId.FromNumber(Interlocked.Increment(ref _nextId));
-        byte[] body = Frame(w =>
-        {
-            w.WriteStartObject();
-            w.WriteString("jsonrpc"u8, "2.0"u8);
-            w.WritePropertyName("id"u8);
-            id.WriteTo(w);
-            w.WriteString("method"u8, method);
-            if (parameters is not null) { w.WritePropertyName("params"u8); parameters.WriteTo(w); }
-            w.WriteEndObject();
-        });
+        byte[] body = Frame(w => JsonRpcFrames.Call(w, id, method, parameters));
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct, _lifetime.Token);
         cts.CancelAfter(timeout);
@@ -219,14 +210,7 @@ public sealed class HttpMcpBridge : McpBridge
 
     private async Task SendNotificationAsync(string method, JsonNode? parameters, CancellationToken ct)
     {
-        byte[] body = Frame(w =>
-        {
-            w.WriteStartObject();
-            w.WriteString("jsonrpc"u8, "2.0"u8);
-            w.WriteString("method"u8, method);
-            if (parameters is not null) { w.WritePropertyName("params"u8); parameters.WriteTo(w); }
-            w.WriteEndObject();
-        });
+        byte[] body = Frame(w => JsonRpcFrames.Call(w, RpcId.None, method, parameters));
         await PostFireAndForgetAsync(body, ct).ConfigureAwait(false);
     }
 
@@ -394,20 +378,8 @@ public sealed class HttpMcpBridge : McpBridge
         bool ping = string.Equals(msg.Method, "ping", StringComparison.Ordinal);
         byte[] body = Frame(w =>
         {
-            w.WriteStartObject();
-            w.WriteString("jsonrpc"u8, "2.0"u8);
-            w.WritePropertyName("id"u8);
-            msg.Id.WriteTo(w);
-            if (ping) { w.WritePropertyName("result"u8); w.WriteStartObject(); w.WriteEndObject(); }
-            else
-            {
-                w.WritePropertyName("error"u8);
-                w.WriteStartObject();
-                w.WriteNumber("code"u8, JsonRpcErrorCodes.MethodNotFound);
-                w.WriteString("message"u8, $"Hubris does not support client method '{msg.Method}'");
-                w.WriteEndObject();
-            }
-            w.WriteEndObject();
+            if (ping) JsonRpcFrames.EmptyResult(w, msg.Id);
+            else JsonRpcFrames.Error(w, msg.Id, JsonRpcErrorCodes.MethodNotFound, $"Hubris does not support client method '{msg.Method}'");
         });
         try
         {

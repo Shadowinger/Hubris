@@ -24,7 +24,7 @@ Measured on an M-series Mac with the 4 bridges from my own `~/.hubris/config.jso
 | context used after unlocking the tools a task needs | all 52 | 13 of 52, ~1 800 tokens (81 % less, from `hub_status` on a real session) |
 | time until `tools/list` is answered | ~1.8 s (every bridge spawned via `npx`) | 72 ms (definitions served from the SQLite cache, bridges spawned on first call) |
 | MCP server processes after start | 4 (one per server) | 0 (bridges start lazily; 1 of 4 running after a typical session) |
-| server binary | | 5.1 MB, starts in ~50 ms, ~13 MB RSS in steady state |
+| server binary | | 9.3 MB, starts in ~50 ms, ~13 MB RSS in steady state |
 
 The token numbers are bytes/4 estimates. The second row comes from a live session where the model
 searched for and unlocked 10 bridged tools; the rest stayed off the list.
@@ -53,6 +53,8 @@ client ──stdio──▶ Hubris ──stdio──▶ bridge 1 (npx …)
   key names (url, transport and header names for a remote server), with a TTL (`--cache-ttl`, default 24 h).
   On the next start the definitions are served from the cache; the child process is only started, or the
   remote session only opened, on the first real call to one of its tools.
+  A bridge that is not in the cache is started at once, and the hub waits at most 10 s for it: one that is slower
+  joins later and its tools are announced with `tools/list_changed`, so a slow server cannot make the client give up on the hub.
   A child that exits is started again by the next call; after four exits in a row without an answer its tools
   are withdrawn until Clear cache or a restart.
 - **Remote servers.** A bridge with a `url` instead of a `command` is reached over HTTP: Streamable HTTP
@@ -76,14 +78,16 @@ client ──stdio──▶ Hubris ──stdio──▶ bridge 1 (npx …)
   the rotated token, because a refresh token used twice gets the whole grant revoked. A refresh token the server
   rejects with `invalid_grant` is dropped and the bridge shows as expired until the next Connect. For a stdio bridge
   the token goes into the child's environment under `auth.env` right before the lazy spawn. The desktop app's
-  Connections card shows the state per bridge with Connect / Disconnect; the same goes over the control socket
+  Connections card shows the state per bridge with Connect / Disconnect (Disconnect is sent to every running hub,
+  and a hub that finds the token gone from the store stops using its copy); the same goes over the control socket
   as `oauth_start`, `oauth_revoke` and the `oauth_changed` event.
 - **Safe mode.** Tools are classified read-only / mutating / destructive from their annotations and names.
   Read-only calls pass, mutating calls have their argument values scanned (every string in the call, joined the way
   a shell would see them, so `{"command":"rm","args":["-rf","/"]}`, a tab or a quoted binary read the same as
-  `rm -rf /`) for things like `rm -rf`, `DROP TABLE`, `DELETE`/`UPDATE` without `WHERE`, `git push --force`;
+  `rm -rf /`) for things like `rm` with a recursive and a force flag in any spelling (`-rf`, `-r --force`, `-r -v -f`), `DROP TABLE`, `DELETE`/`UPDATE` without `WHERE`, `git push --force`;
   destructive calls are blocked. Every pattern has a match timeout, and a timeout counts as a hit. A blocked call waits for Approve / Deny in the desktop app
-  (`--approval-timeout`, default 120 s) and fails with `[SAFE MODE BLOCKED]` if nobody answers. "Remember for
+  (`--approval-timeout`, default 120 s) and fails with `[SAFE MODE BLOCKED]` if nobody answers, or at once when no
+  client that may approve is attached. "Remember for
   this session" covers a tool's declared risk, never an argument-pattern hit.
 - **Auto mode** (`--mode=auto`, or the Auto button per hub). Modelled on Claude Code's auto mode, with fixed
   rules where Claude Code uses a classifier model. Everything runs without asking, including tools a server
@@ -99,14 +103,15 @@ client ──stdio──▶ Hubris ──stdio──▶ bridge 1 (npx …)
 - **Bypass mode** (`--mode=bypass`). No checks and no prompts. The one exception, as in Claude Code: `rm` on
   `/`, the home directory (as `~`, `$HOME` or spelled out) or a system directory still waits for approval,
   in Auto mode too.
-- **DLP.** Tool output is scanned for API keys and `key=value` / `"key": "value"` secrets (password, token,
+- **DLP.** Tool output (text blocks, the text of embedded resources, `structuredContent`; other fields of a result
+  are passed on as the server sent them) is scanned for API keys and `key=value` / `"key": "value"` secrets (password, token,
   secret, api key and the like, also as `DATABASE_PASSWORD=`), bearer tokens and JWTs, private keys, Slack
   tokens, card numbers (Luhn-checked), IBANs (mod-97-checked) and Czech birth numbers written with a slash;
   the values are masked before they reach the model.
 - **Takeover.** The desktop app scans the MCP configs of Claude Desktop, Claude Code (including per-project
   entries in `~/.claude.json`), Cursor, Windsurf, VS Code and project-level `.mcp.json` / `.cursor/mcp.json` /
   `.vscode/mcp.json`, imports the servers (commands and `url` entries, with their headers) into
-  `~/.hubris/config.json` and rewrites the client config so that it points at Hubris only. A snapshot and a whole-file backup go to `~/.hubris/backups/` (0600, never next to a project file), a second takeover adds to the snapshot what the user added in between, Restore puts it all back, and symlinked configs are written through the link.
+  `~/.hubris/config.json` and rewrites the client config so that it points at Hubris only. A snapshot and a whole-file backup go to `~/.hubris/backups/` (0600, never next to a project file; the newest 5 backups per file are kept), a second takeover adds to the snapshot what the user added in between, Restore puts it all back (with the client closed; a Restore that has only a whole-file backup left first saves the file it replaces), and symlinked configs are written through the link.
 
 ## Install
 
@@ -175,7 +180,7 @@ Built-in tools: `hub_status`, `git_smart_status`, `fs_read_head`, `mcp_search_to
 
 The control socket is `~/.hubris/run/<pid>.sock`; the desktop app finds running hubs through it, and the
 following commands are available over it: `get_status`, `list_tools`, `set_mode`, `approve`, `deny`, `forget`,
-`list_decisions`, `reveal`, `lock`, `clear_cache`, `reload_config`, `cache_maintain`, `shutdown`, `oauth_start`,
+`list_decisions`, `reveal`, `lock`, `clear_cache`, `reload_config`, `shutdown`, `oauth_start`,
 `oauth_revoke`. The socket is 0600, and the commands that change what the hub does (mode, approvals, locks,
 cache, config, OAuth, shutdown) are accepted only from the `Hubris.Desktop` binary in the hub's own folder
 (the same bundle or install), compared by the full path the kernel reports for the peer; the bridges and
@@ -209,7 +214,7 @@ tests/run.sh                        # unit tests, warning-free AOT publish, e2e 
 dotnet test tests/Hubris.Tests      # unit tests only
 ```
 
-201 xUnit tests and 87 end-to-end checks (`tests/e2e/control_test.py` drives a published binary with a Python
+212 xUnit tests and 91 end-to-end checks (`tests/e2e/control_test.py` drives a published binary with a Python
 stdio echo server as bridge, `tests/e2e/http_test.py` with a Python Streamable HTTP server). Both projects publish with `TreatWarningsAsErrors` and zero IL/AOT warnings.
 
 ## Layout

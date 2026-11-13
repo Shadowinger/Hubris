@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
@@ -23,6 +24,49 @@ public sealed class JsonRpcError
     [JsonPropertyName("code")] public int Code { get; set; }
     [JsonPropertyName("message")] public string Message { get; set; } = string.Empty;
     [JsonPropertyName("data")] public JsonNode? Data { get; set; }
+}
+
+/// <summary>The JSON-RPC shapes written by hand, shared by the stdio transport and both bridge kinds.</summary>
+public static class JsonRpcFrames
+{
+    /// <summary>A request, or a notification when <paramref name="id"/> is <see cref="RpcId.None"/>.</summary>
+    public static void Call(Utf8JsonWriter w, RpcId id, string method, JsonNode? parameters)
+    {
+        w.WriteStartObject();
+        w.WriteString("jsonrpc"u8, "2.0"u8);
+        if (!id.IsNone) { w.WritePropertyName("id"u8); id.WriteTo(w); }
+        w.WriteString("method"u8, method);
+        if (parameters is not null) { w.WritePropertyName("params"u8); parameters.WriteTo(w); }
+        w.WriteEndObject();
+    }
+
+    public static void Error(Utf8JsonWriter w, RpcId id, int code, string message, JsonNode? data = null)
+    {
+        w.WriteStartObject();
+        w.WriteString("jsonrpc"u8, "2.0"u8);
+        w.WritePropertyName("id"u8);
+        id.WriteTo(w);
+        w.WritePropertyName("error"u8);
+        w.WriteStartObject();
+        w.WriteNumber("code"u8, code);
+        w.WriteString("message"u8, message);
+        if (data is not null) { w.WritePropertyName("data"u8); data.WriteTo(w); }
+        w.WriteEndObject();
+        w.WriteEndObject();
+    }
+
+    /// <summary>The answer to a ping.</summary>
+    public static void EmptyResult(Utf8JsonWriter w, RpcId id)
+    {
+        w.WriteStartObject();
+        w.WriteString("jsonrpc"u8, "2.0"u8);
+        w.WritePropertyName("id"u8);
+        id.WriteTo(w);
+        w.WritePropertyName("result"u8);
+        w.WriteStartObject();
+        w.WriteEndObject();
+        w.WriteEndObject();
+    }
 }
 
 public static class JsonRpcErrorCodes
@@ -145,6 +189,8 @@ public sealed class ContentBlock
     [JsonPropertyName("text")] public string? Text { get; set; }
     [JsonPropertyName("data")] public string? Data { get; set; }
     [JsonPropertyName("mimeType")] public string? MimeType { get; set; }
+    /// <summary>Everything else a server put in the block (an embedded resource, a link's uri and name, annotations): passed on as it came.</summary>
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
 
     public static ContentBlock FromText(string text) => new() { Type = "text", Text = text };
 }
@@ -153,6 +199,8 @@ public sealed class CallToolResult
 {
     [JsonPropertyName("content")] public List<ContentBlock> Content { get; set; } = new();
     [JsonPropertyName("isError")] public bool? IsError { get; set; }
+    /// <summary>structuredContent, _meta and whatever a later protocol version adds.</summary>
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
 
     [JsonIgnore] public bool Failed => IsError == true;
 

@@ -23,6 +23,7 @@ public sealed class McpSnapshot
 public static class ClientConfigHijacker
 {
     public const string ServerKey = "hubris";
+    public const int KeptBackups = 5;
 
     /// <summary>
     /// Adds every detected server as a bridge. The same launch (command + args) anywhere is one bridge; a name
@@ -139,6 +140,7 @@ public static class ClientConfigHijacker
 
         string? latest = LatestBackup(client.Path);
         if (latest is null) return null;
+        if (File.Exists(client.Path)) Backup(client.Path); // this replaces the whole file, state the client wrote since included: keep it, so one more Restore brings it back
         File.Copy(latest, client.Path, overwrite: true);
         Log.Info($"{client.Kind.Name}: restored {client.Path} from {latest}");
         return latest;
@@ -146,15 +148,16 @@ public static class ClientConfigHijacker
 
     public static bool HasRestorePoint(string path) => File.Exists(SnapshotPathFor(path)) || LatestBackup(path) is not null;
 
-    public static string? LatestBackup(string path)
+    public static string? LatestBackup(string path) => Backups(path).FirstOrDefault();
+
+    /// <summary>Whole-file backups of one client config, newest first (the name carries the time).</summary>
+    private static List<string> Backups(string path)
     {
         string dir = HubrisPaths.BackupsDir;
         string prefix = Path.GetFileName(Path.ChangeExtension(SnapshotPathFor(path), null)) + ".bak-";
-        if (!Directory.Exists(dir)) return null;
-        string? best = null;
-        foreach (var f in Directory.EnumerateFiles(dir, prefix + "*"))
-            if (best is null || string.CompareOrdinal(f, best) > 0) best = f;
-        return best;
+        var list = Directory.Exists(dir) ? Directory.EnumerateFiles(dir, prefix + "*").ToList() : [];
+        list.Sort((a, b) => string.CompareOrdinal(b, a));
+        return list;
     }
 
     /// <summary>Merges one server entry into a client config without touching the others (used by --install-*).</summary>
@@ -199,6 +202,9 @@ public static class ClientConfigHijacker
         string backup = System.IO.Path.ChangeExtension(SnapshotPathFor(path), null) + ".bak-" + stamp + ".json";
         File.Copy(path, backup, overwrite: true);
         if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(backup, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        // ~/.claude.json runs to megabytes and carries secrets: the newest few are enough (the snapshot holds the original server list).
+        foreach (string old in Backups(path).Skip(KeptBackups))
+            try { File.Delete(old); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Log.Debug($"backup {old}: {ex.Message}"); }
         return backup;
     }
 

@@ -81,6 +81,12 @@ public sealed class OAuthTokenProvider
                 fresh = Fresh(tok);
                 if (fresh && (rotated || !forceRefresh)) { SetState("connected"); return tok.AccessToken; }
             }
+            else
+            {
+                // Gone from the store: the user disconnected on another hub. Refreshing the copy in memory would write the sign-in back.
+                SetState("none");
+                return null;
+            }
             if (tok.RefreshToken is null)
             {
                 SetState(fresh ? "connected" : "expired");
@@ -352,8 +358,8 @@ public sealed class OAuthManager
         foreach (var p in providers)
         {
             try { await p.KeepWarmAsync(ct).ConfigureAwait(false); }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex) { Log.Warn($"oauth '{p.Bridge}': keep-warm failed: {ex.Message}"); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex) { Log.Warn($"oauth '{p.Bridge}': keep-warm failed: {ex.Message}"); } // an HTTP timeout arrives as a cancellation too, and must not end the loop
         }
     }
 

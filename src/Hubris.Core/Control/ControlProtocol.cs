@@ -28,7 +28,6 @@ public sealed class ControlMessage
     [JsonPropertyName("cacheHits")] public long? CacheHits { get; set; }
     [JsonPropertyName("cacheMisses")] public long? CacheMisses { get; set; }
     [JsonPropertyName("cacheSize")] public int? CacheSize { get; set; }
-    [JsonPropertyName("cacheCapacity")] public int? CacheCapacity { get; set; }
     [JsonPropertyName("blocked")] public long? Blocked { get; set; }
     [JsonPropertyName("dlpRedactions")] public long? DlpRedactions { get; set; }
     [JsonPropertyName("toolCount")] public int? ToolCount { get; set; }
@@ -64,8 +63,7 @@ public sealed class ControlMessage
     [JsonPropertyName("timeoutSec")] public double? TimeoutSec { get; set; }
     [JsonPropertyName("remember")] public bool? Remember { get; set; }
 
-    // ---- log
-    [JsonPropertyName("level")] public string? Level { get; set; }
+    // ---- ack note ("browser opened")
     [JsonPropertyName("text")] public string? Text { get; set; }
 
     // ---- ack
@@ -131,7 +129,6 @@ public static class ControlTypes
     public const string ApprovalResolved = "approval_resolved";
     public const string ToolsChanged = "tools_changed";
     public const string ModeChanged = "mode_changed";
-    public const string Log = "log";
     public const string Ack = "ack";
     public const string OAuthChanged = "oauth_changed";
 
@@ -147,7 +144,6 @@ public static class ControlTypes
     public const string ListDecisions = "list_decisions";
     public const string ClearCache = "clear_cache";
     public const string ReloadConfig = "reload_config";
-    public const string CacheMaintain = "cache_maintain";
     public const string Shutdown = "shutdown";
     public const string OAuthStart = "oauth_start";
     public const string OAuthRevoke = "oauth_revoke";

@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Hubris.Protocol;
 
@@ -142,7 +144,48 @@ public static partial class DlpSanitizer
                 string clean = Sanitize(text);
                 if (!ReferenceEquals(clean, text)) block.Text = clean;
             }
+            SanitizeExtra(block.Extra);
         }
+        SanitizeExtra(result.Extra);
         return result;
+    }
+
+    /// <summary>
+    /// The fields the hub passes on without reading them (an embedded resource, structuredContent) reach the model
+    /// just like a text block: every string in them is masked. "blob" and "data" hold base64 and are left alone.
+    /// </summary>
+    private static void SanitizeExtra(Dictionary<string, JsonElement>? extra)
+    {
+        if (extra is null) return;
+        foreach (string key in extra.Keys.ToArray())
+        {
+            if (key is "blob" or "data" || extra[key].ValueKind is not (JsonValueKind.Object or JsonValueKind.Array or JsonValueKind.String)) continue;
+            var holder = new JsonArray(JsonNode.Parse(extra[key].GetRawText()));
+            if (SanitizeStrings(holder)) extra[key] = JsonSerializer.SerializeToElement(holder[0], McpJsonContext.Default.JsonNode);
+        }
+    }
+
+    /// <summary>Masks every string under <paramref name="node"/> in place; true when something changed.</summary>
+    private static bool SanitizeStrings(JsonNode? node)
+    {
+        bool changed = false;
+        if (node is JsonArray arr)
+        {
+            for (int i = 0; i < arr.Count; i++)
+            {
+                if (arr[i] is JsonValue v && v.TryGetValue<string>(out var s)) { string clean = Sanitize(s); if (!ReferenceEquals(clean, s)) { arr[i] = clean; changed = true; } }
+                else changed |= SanitizeStrings(arr[i]);
+            }
+        }
+        else if (node is JsonObject obj)
+        {
+            foreach (var kv in obj.ToArray())
+            {
+                if (kv.Key is "blob" or "data") continue;
+                if (kv.Value is JsonValue v && v.TryGetValue<string>(out var s)) { string clean = Sanitize(s); if (!ReferenceEquals(clean, s)) { obj[kv.Key] = clean; changed = true; } }
+                else changed |= SanitizeStrings(kv.Value);
+            }
+        }
+        return changed;
     }
 }

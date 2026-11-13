@@ -116,6 +116,7 @@ public sealed class ControlServer : IAsyncDisposable
 
     public int ClientCount { get { lock (_gate) return _clients.Count; } }
     public bool HasClients => ClientCount > 0;
+    public ControlClient[] Clients { get { lock (_gate) return _clients.ToArray(); } }
 
     public event Action<int>? ClientCountChanged;
 

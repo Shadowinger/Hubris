@@ -108,8 +108,12 @@ foreach (var cli in opts.Bridges)
 
 var bridges = runtime.Bridges;
 var bridgeHost = new BridgeHost(runtime, registry);
-// All at once: a client gives the hub ~30 s to answer initialize, and one cold npx bridge can eat that alone.
-await Task.WhenAll(bridgeSpecs.Select(spec => bridgeHost.AddAsync(spec, shutdown.Token)));
+// All at once, and for 10 s at most: a client gives the hub ~30 s to answer initialize, and one bridge that hangs
+// eats that alone. Whatever is still starting joins later and is announced with tools/list_changed.
+var adds = bridgeSpecs.Select(spec => bridgeHost.AddAsync(spec, shutdown.Token)).ToArray();
+await Task.WhenAny(Task.WhenAll(adds), Task.Delay(TimeSpan.FromSeconds(10)));
+var late = adds.Where(a => !a.IsCompleted).ToArray();
+if (late.Length > 0) Log.Warn($"{late.Length} bridge(s) still starting; their tools are announced when they are ready");
 toolCache?.MaintainIfDue(TimeSpan.FromDays(7)); // after the bridges: never on the startup path, never fatal
 
 ControlHub? control = null;
@@ -136,6 +140,12 @@ runtime.Auth.StartKeepWarm(shutdown.Token); // idle hubs still refresh before ex
 var transport = new StdioTransport();
 var router = new McpRouter(transport, registry, security, runtime, bridges, control);
 router.StartAutoLock(TimeSpan.FromSeconds(opts.AutoLockSec));
+foreach (var add in late) _ = AdoptWhenReadyAsync(add);
+async Task AdoptWhenReadyAsync(Task<McpBridge?> add)
+{
+    try { if (await add is { } bridge) await router.AdoptAsync(bridge); }
+    catch (Exception ex) { Log.Warn($"late bridge: {ex.Message}"); }
+}
 
 Log.Info($"ready mode={ModeNames.ToText(opts.Mode)} compact={(opts.Compact ? "on" : "off")} tools={registry.Count} bridges={bridges.Count} startup={uptime.Elapsed.TotalMilliseconds:0.0}ms");
 
@@ -160,6 +170,7 @@ if (stdinClosed && !shutdown.IsCancellationRequested)
 RequestShutdown(stdinClosed ? "stdin closed" : "signal");
 await router.ShutdownAsync();
 if (control is not null) await control.DisposeAsync();
+try { await Task.WhenAll(adds); } catch (Exception ex) { Log.Debug($"bridge start: {ex.Message}"); } // a start cut short by the shutdown has cleaned up after itself
 await Task.WhenAll(bridges.Select(b => b.DisposeAsync().AsTask()));
 toolCache?.Dispose();
 if (stdinClosed) await transport.DisposeAsync();

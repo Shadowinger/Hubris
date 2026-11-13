@@ -349,6 +349,57 @@ public class AuthTests : IDisposable
     }
 
     [Fact]
+    public async Task Disconnect_on_one_hub_is_not_undone_by_another_hubs_refresh()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var world = new FakeAuthWorld();
+        string dir = Path.Combine(_dir, "signed-out");
+        new FileTokenStore(dir).Set("notion", new StoredToken { AccessToken = "A1", RefreshToken = "R1", ExpiresAt = now.ToUnixTimeSeconds() + 30, TokenEndpoint = "https://as.test/token", ClientId = "cid-1", Resource = "https://mcp.test/mcp" });
+        OAuthTokenProvider Hub() => new(Remote.Name, Remote.Auth!, Remote.Url, new CachingTokenStore(new FileTokenStore(dir)), new HttpClient(world), world.Browser, () => now, lockDir: dir);
+        var (a, b) = (Hub(), Hub());
+        Assert.Equal("connected", b.Info().State); // b holds the token in memory
+
+        a.Revoke();
+        Assert.Null(await b.GetAccessTokenAsync(CancellationToken.None)); // inside the refresh window: before, b refreshed and wrote the sign-in back
+        Assert.Equal(0, world.Refreshes);
+        Assert.Null(new FileTokenStore(dir).Get("notion"));
+        Assert.Equal("none", b.Info().State);
+    }
+
+    [Fact]
+    public async Task Keep_warm_pass_survives_a_token_endpoint_that_times_out()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var store = new CachingTokenStore(new FileTokenStore(Path.Combine(_dir, "timeout")));
+        store.Set("notion", new StoredToken { AccessToken = "A1", RefreshToken = "R1", ExpiresAt = now.ToUnixTimeSeconds() + 300, TokenEndpoint = "https://as.test/token", ClientId = "cid-1", Resource = "https://mcp.test/mcp" });
+        var manager = new OAuthManager(store, new HttpClient(new TimingOutHandler()));
+        manager.GetOrCreate(Remote);
+        await manager.KeepWarmAllAsync(CancellationToken.None); // HttpClient reports its timeout as a cancellation; that once ended the keep-warm loop for good
+    }
+
+    private sealed class TimingOutHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+            => throw new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout", new TimeoutException());
+    }
+
+    [Fact]
+    public async Task Callback_listener_outlives_a_connection_that_says_nothing_useful()
+    {
+        using var listener = new OAuthPkceFlow.LoopbackListener();
+        var wait = listener.WaitForCallbackAsync("s1", CancellationToken.None);
+        using (var spare = new System.Net.Sockets.TcpClient())
+        {
+            await spare.ConnectAsync(IPAddress.Loopback, listener.Port);
+            spare.LingerState = new System.Net.Sockets.LingerOption(true, 0); // closed with a reset, like a browser's abandoned spare socket
+        }
+        using var http = new HttpClient();
+        var resp = await http.GetAsync($"{listener.RedirectUri}?code=C0DE&state=s1");
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        Assert.Equal("C0DE", (await wait)["code"]);
+    }
+
+    [Fact]
     public async Task Hub_that_saw_no_token_picks_up_a_sign_in_made_by_another_hub()
     {
         string dir = Path.Combine(_dir, "late");

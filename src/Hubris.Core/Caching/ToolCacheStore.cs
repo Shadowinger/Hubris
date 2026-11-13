@@ -201,11 +201,6 @@ public sealed class ToolCacheStore : IDisposable
         }
     }
 
-    public void Maintain()
-    {
-        lock (_gate) MaintainLocked(Require(), DateTimeOffset.UtcNow.ToUnixTimeSeconds());
-    }
-
     private static void MaintainLocked(SqliteConnection db, long now)
     {
         Exec(db, "VACUUM; ANALYZE; REINDEX;");

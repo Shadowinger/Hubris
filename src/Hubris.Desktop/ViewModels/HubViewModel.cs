@@ -172,9 +172,6 @@ public sealed class HubViewModel : ObservableObject
                     if (Approvals[i].Id == m.ApprovalId) Approvals.RemoveAt(i);
                 RaiseApprovals();
                 break;
-            case ControlTypes.Log:
-                AddEvent(EventRow.FromLog(m));
-                break;
             case ControlTypes.Ack:
                 if (m.Ok == false)
                     AddEvent(EventRow.Error(m.Error is { } e && e.StartsWith("unknown command", StringComparison.Ordinal)
@@ -194,6 +191,10 @@ public sealed class HubViewModel : ObservableObject
     public Task ReloadConfigAsync() => _client.ReloadConfigAsync();
     public Task SignInAsync(string bridge) => _client.OAuthStartAsync(bridge);
     public Task RefreshBridgeAsync(string bridge) => _client.RefreshBridgeAsync(bridge);
+    /// <summary>Forgets the bridge's sign-in on this hub, when this hub has that bridge.</summary>
+    public Task RevokeAsync(string bridge) => Auth.Any(a => a.Bridge == bridge) ? _client.OAuthRevokeAsync(bridge) : Task.CompletedTask;
+    /// <summary>Installed by MainViewModel: every hub holds the token in memory, so Disconnect has to reach them all.</summary>
+    public Func<string, Task>? RevokeEverywhere { get; set; }
     /// <summary>A browser login on this hub just ended well; the other hubs have to re-list that bridge to see its tools.</summary>
     public event Action<HubViewModel, string>? SignedIn;
 
@@ -234,7 +235,7 @@ public sealed class HubViewModel : ObservableObject
         for (int i = 0; same && i < infos.Count; i++) same = Auth[i].SameAs(infos[i]);
         if (same) return;
         Auth.Clear();
-        foreach (var a in infos) Auth.Add(new AuthRow(a, b => _client.OAuthStartAsync(b), b => _client.OAuthRevokeAsync(b)));
+        foreach (var a in infos) Auth.Add(new AuthRow(a, b => _client.OAuthStartAsync(b), b => RevokeEverywhere?.Invoke(b) ?? RevokeAsync(b)));
         Raise(nameof(HasAuth));
     }
 
@@ -382,14 +383,6 @@ public sealed class EventRow
         Args = m.Args?.ToJsonString(CompactJson) ?? "",
         Preview = m.Reason ?? "",
         Tone = "warn",
-    };
-
-    public static EventRow FromLog(ControlMessage m) => new()
-    {
-        Time = Fmt.LocalTime(m.Timestamp),
-        Tool = "log",
-        Outcome = m.Level ?? "info",
-        Preview = m.Text ?? "",
     };
 
     public static EventRow Info(string text) => new()

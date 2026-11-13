@@ -70,8 +70,9 @@ public static partial class DangerPatterns
     [GeneratedRegex(@"\bWHERE\b", Opts, Timeout)]
     public static partial Regex WhereClause();
 
-    // rm -rf / rm -fr / rm -r -f / rm --recursive --force; the binary may be quoted ('rm' -rf)
-    [GeneratedRegex(@"\brm['""]?\s+(-\w*r\w*f|-\w*f\w*r|-\w*r\w*\s+-\w*f|-\w*f\w*\s+-\w*r|--recursive\s+--force|--force\s+--recursive)\b", Opts, Timeout)]
+    // rm with a recursive flag and a force flag, in any spelling and order, other flags between them or not
+    // (-rf, -fr, -r -v -f, -r --force, --recursive -f); the binary may be quoted ('rm' -rf)
+    [GeneratedRegex(@"\brm['""]?\s+(?=(?:[^\n;|&]*?\s)?(?:-[a-z]*r[a-z]*|--recursive)(?![\w-]))(?=(?:[^\n;|&]*?\s)?(?:-[a-z]*f[a-z]*|--force)(?![\w-]))", Opts, Timeout)]
     public static partial Regex RmRecursiveForce();
 
     // git [-C dir] push … --force|-f|+ref, reset --hard, clean -f (any flag order), branch -D, checkout -- ., restore ., stash drop|clear

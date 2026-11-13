@@ -79,38 +79,10 @@ public sealed class StdioTransport : IAsyncDisposable
         }, ct);
 
     public ValueTask SendErrorAsync(RpcId id, int code, string message, JsonNode? data = null, CancellationToken ct = default)
-        => WriteFrameAsync(w =>
-        {
-            w.WriteStartObject();
-            w.WriteString("jsonrpc"u8, "2.0"u8);
-            w.WritePropertyName("id"u8);
-            id.WriteTo(w);
-            w.WritePropertyName("error"u8);
-            w.WriteStartObject();
-            w.WriteNumber("code"u8, code);
-            w.WriteString("message"u8, message);
-            if (data is not null)
-            {
-                w.WritePropertyName("data"u8);
-                data.WriteTo(w);
-            }
-            w.WriteEndObject();
-            w.WriteEndObject();
-        }, ct);
+        => WriteFrameAsync(w => JsonRpcFrames.Error(w, id, code, message, data), ct);
 
     public ValueTask SendNotificationAsync(string method, JsonNode? parameters = null, CancellationToken ct = default)
-        => WriteFrameAsync(w =>
-        {
-            w.WriteStartObject();
-            w.WriteString("jsonrpc"u8, "2.0"u8);
-            w.WriteString("method"u8, method);
-            if (parameters is not null)
-            {
-                w.WritePropertyName("params"u8);
-                parameters.WriteTo(w);
-            }
-            w.WriteEndObject();
-        }, ct);
+        => WriteFrameAsync(w => JsonRpcFrames.Call(w, RpcId.None, method, parameters), ct);
 
     private async ValueTask WriteFrameAsync(Action<Utf8JsonWriter> write, CancellationToken ct)
     {

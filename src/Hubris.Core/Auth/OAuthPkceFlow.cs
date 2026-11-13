@@ -145,26 +145,38 @@ public static class OAuthPkceFlow
             while (true)
             {
                 using var client = await _listener.AcceptTcpClientAsync(ct).ConfigureAwait(false);
-                using var stream = client.GetStream();
-                string head = await ReadHeadAsync(stream, ct).ConfigureAwait(false);
-                int sp1 = head.IndexOf(' '), sp2 = sp1 < 0 ? -1 : head.IndexOf(' ', sp1 + 1);
-                string target = sp1 < 0 || sp2 < 0 ? "/" : head[(sp1 + 1)..sp2];
-                if (!target.StartsWith("/callback", StringComparison.Ordinal))
+                // One connection at a time: a browser's spare socket that never sends anything, or one that is reset,
+                // must not hold up or end the wait for the real redirect.
+                using var one = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                one.CancelAfter(TimeSpan.FromSeconds(5));
+                try
                 {
-                    await WriteAsync(stream, "404 Not Found", "<p>Not here.</p>", ct).ConfigureAwait(false);
-                    continue; // a browser's favicon probe must not consume the callback
+                    using var stream = client.GetStream();
+                    string head = await ReadHeadAsync(stream, one.Token).ConfigureAwait(false);
+                    int sp1 = head.IndexOf(' '), sp2 = sp1 < 0 ? -1 : head.IndexOf(' ', sp1 + 1);
+                    string target = sp1 < 0 || sp2 < 0 ? "/" : head[(sp1 + 1)..sp2];
+                    if (!target.StartsWith("/callback", StringComparison.Ordinal))
+                    {
+                        await WriteAsync(stream, "404 Not Found", "<p>Not here.</p>", one.Token).ConfigureAwait(false);
+                        continue; // a browser's favicon probe must not consume the callback
+                    }
+                    var query = ParseQuery(target);
+                    if (query.GetValueOrDefault("state") != state)
+                    {
+                        await WriteAsync(stream, "400 Bad Request", "<p>This is not the sign-in Hubris is waiting for.</p>", one.Token).ConfigureAwait(false);
+                        continue;
+                    }
+                    string html = query.ContainsKey("error")
+                        ? $"<h2>Hubris: sign-in failed</h2><p>{WebUtility.HtmlEncode(query.GetValueOrDefault("error_description") ?? query["error"])}</p>"
+                        : "<h2>Hubris is connected</h2><p>You can close this tab.</p><script>window.close()</script>";
+                    try { await WriteAsync(stream, "200 OK", html, one.Token).ConfigureAwait(false); }
+                    catch (Exception ex) when (ex is IOException or SocketException || (ex is OperationCanceledException && !ct.IsCancellationRequested)) { } // the code is in hand; the page is a courtesy
+                    return query;
                 }
-                var query = ParseQuery(target);
-                if (query.GetValueOrDefault("state") != state)
+                catch (Exception ex) when (ex is IOException or SocketException || (ex is OperationCanceledException && !ct.IsCancellationRequested))
                 {
-                    await WriteAsync(stream, "400 Bad Request", "<p>This is not the sign-in Hubris is waiting for.</p>", ct).ConfigureAwait(false);
-                    continue;
+                    Log.Debug($"oauth callback: dropped a connection ({ex.Message})");
                 }
-                string html = query.ContainsKey("error")
-                    ? $"<h2>Hubris: sign-in failed</h2><p>{WebUtility.HtmlEncode(query.GetValueOrDefault("error_description") ?? query["error"])}</p>"
-                    : "<h2>Hubris is connected</h2><p>You can close this tab.</p><script>window.close()</script>";
-                await WriteAsync(stream, "200 OK", html, ct).ConfigureAwait(false);
-                return query;
             }
         }
 

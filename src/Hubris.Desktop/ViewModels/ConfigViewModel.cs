@@ -256,6 +256,12 @@ public sealed class ConfigViewModel : ObservableObject
 
     private void RestoreClient(DetectedClient client)
     {
+        if (RunningClientProcess(client.Kind) is { } running)
+        {
+            LastResult = $"✗ {client.Kind.Name}: quit '{running}' first — it keeps this config in memory and would write the Hubris entry back over the restore.";
+            AppendLog(LastResult);
+            return;
+        }
         try
         {
             string? used = ClientConfigHijacker.Restore(client);

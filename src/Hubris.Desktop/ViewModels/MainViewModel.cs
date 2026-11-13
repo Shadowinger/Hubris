@@ -81,6 +81,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             var vm = new HubViewModel(client);
             vm.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(HubViewModel.PendingCount)) RaisePending(); };
             vm.SignedIn += (from, bridge) => { foreach (var other in Hubs.ToArray()) if (!ReferenceEquals(other, from)) _ = other.RefreshBridgeAsync(bridge); };
+            vm.RevokeEverywhere = async bridge => { foreach (var h in Hubs.ToArray()) await h.RevokeAsync(bridge); };
             Hubs.Add(vm);
         });
     }

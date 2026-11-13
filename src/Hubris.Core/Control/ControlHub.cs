@@ -35,7 +35,7 @@ public sealed class ControlHub : IAsyncDisposable
         Server = new ControlServer(HubrisPaths.SocketPath(Environment.ProcessId), OnCommandAsync, OnConnectedAsync);
         Approvals.Requested += p => Server.Broadcast(ApprovalRequestMessage(p));
         // Nobody left to click Approve: fail the waiting calls now instead of after the full timeout.
-        Server.ClientCountChanged += n => { if (n == 0) Approvals.CancelAll(); };
+        Server.ClientCountChanged += _ => { if (!CanApprove) Approvals.CancelAll(); };
         Approvals.Resolved += (p, d) => Server.Broadcast(new ControlMessage
         {
             Type = ControlTypes.ApprovalResolved,
@@ -49,7 +49,8 @@ public sealed class ControlHub : IAsyncDisposable
     public ApprovalGate Approvals { get; }
     public ControlServer Server { get; }
     public TimeSpan ApprovalTimeout => _approvalTimeout;
-    public bool HasClients => Server.HasClients;
+    /// <summary>Somebody connected whose Approve the hub would accept; a mere listener must not make blocked calls wait out the timeout.</summary>
+    public bool CanApprove => Server.Clients.Any(IsTrusted);
     public string? ClientName { get; set; }
     public DateTime StartedAt { get; } = DateTime.UtcNow;
 
@@ -217,7 +218,6 @@ public sealed class ControlHub : IAsyncDisposable
         m.CacheHits = _rt.ToolCache?.Hits ?? 0;
         m.CacheMisses = _rt.ToolCache?.Misses ?? 0;
         m.CacheSize = _rt.ToolCache?.Count ?? 0;
-        m.CacheCapacity = _rt.BridgeCount;
         m.BridgesRunning = _rt.BridgesRunning;
         m.Blocked = _security.BlockedCount;
         m.DlpRedactions = DlpSanitizer.RedactionCount;
@@ -254,7 +254,7 @@ public sealed class ControlHub : IAsyncDisposable
     private static readonly HashSet<string> Privileged = new(StringComparer.Ordinal)
     {
         ControlTypes.SetMode, ControlTypes.Approve, ControlTypes.Reveal, ControlTypes.Lock, ControlTypes.Forget,
-        ControlTypes.ClearCache, ControlTypes.ReloadConfig, ControlTypes.CacheMaintain, ControlTypes.Shutdown,
+        ControlTypes.ClearCache, ControlTypes.ReloadConfig, ControlTypes.Shutdown,
         ControlTypes.OAuthStart, ControlTypes.OAuthRevoke,
     };
 
@@ -413,10 +413,6 @@ public sealed class ControlHub : IAsyncDisposable
                     ack.Text = "browser opened";
                     break;
                 }
-
-                case ControlTypes.CacheMaintain:
-                    if (_rt.ToolCache is { } tc) tc.Maintain(); else Fail(ack, "tool cache is disabled");
-                    break;
 
                 case ControlTypes.Shutdown:
                     Log.Info($"shutdown requested by control client {client.Id}");

@@ -31,7 +31,8 @@ public sealed class HubRuntime
     public McpBridge? Bridge(string name) { foreach (var b in Bridges) if (b.Name == name) return b; return null; }
     public int BridgeCount => Bridges.Count;
     public int BridgesRunning { get { int n = 0; foreach (var b in Bridges) if (b.IsAlive) n++; return n; } }
-    public const string Version = "1.4.0";
+    /// <summary>From Directory.Build.props, the number the bundle's Info.plist is written from too.</summary>
+    public static readonly string Version = typeof(HubRuntime).Assembly.GetName().Version!.ToString(3);
 }
 
 public sealed class ToolRegistry

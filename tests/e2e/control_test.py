@@ -306,6 +306,7 @@ st2 = None
 s2.sendall((json.dumps({"type":"get_status","reqId":2}) + "\n").encode()); st2 = recv2("status")
 check(ack2["ok"] and st2["cacheSize"] == 1 and st2["bridgesRunning"] == 1, f"clear_cache re-listed and re-cached the bridge (entries={st2['cacheSize']})")
 lst2 = rpc2({"jsonrpc":"2.0","id":5,"method":"tools/list"})
+check(any(t_["name"] == "py__peek" for t_ in lst2["result"]["tools"]), "a tool the model unlocked is still listed after the bridge was re-listed")
 # clear_cache for one bridge (what the desktop sends to the other hubs after a sign-in), and for a name nobody has
 s2.sendall((json.dumps({"type":"clear_cache","reqId":3,"bridge":"py"}) + "\n").encode()); ack3 = recv2("ack")
 s2.sendall((json.dumps({"type":"clear_cache","reqId":4,"bridge":"nope"}) + "\n").encode()); ack4 = recv2("ack")
@@ -348,13 +349,11 @@ r3, _ = rpc3({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"mcp
 check(r3["result"]["content"][0]["text"].startswith("echo:peek"), "bridge from config.json answers")
 s3.sendall((json.dumps({"type":"reload_config","reqId":2}) + "\n").encode()); ack3b = recv3("ack")
 check(ack3b["ok"] and not ack3b.get("bridges"), "second reload adds nothing (idempotent)")
-s3.sendall((json.dumps({"type":"cache_maintain","reqId":3}) + "\n").encode()); ack3c = recv3("ack")
-check(ack3c["ok"], "cache_maintain ran VACUUM/ANALYZE/REINDEX")
 f3.close(); s3.close(); hub3.stdin.close(); hub3.wait(timeout=30)
 check(hub3.returncode == 0, "third hub exited cleanly")
 
 # ===================================================================== fourth run: without --control-trust-all a plain process may not steer the hub
-hub4 = subprocess.Popen([BIN, "--stdio", "--compact"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+hub4 = subprocess.Popen([BIN, "--stdio", "--compact", "--bridge=py:python3", ECHO, "--child-flag"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
 hub4.stdin.write(json.dumps({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","clientInfo":{"name":"ctl-test-4","version":"1"}}}) + "\n"); hub4.stdin.flush()
 while "method" in json.loads(hub4.stdout.readline()): pass
 time.sleep(0.3)
@@ -371,6 +370,13 @@ while True:
     st4 = json.loads(f4.readline())
     if st4["type"] == "status": break
 check(st4["mode"] == "Safe", "mode unchanged after the refused command")
+# this client cannot approve anything, so a blocked call must come back at once instead of waiting 120 s for an Approve that would be refused
+t4 = time.time()
+hub4.stdin.write(json.dumps({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"mcp_execute_tool","arguments":{"toolName":"py__nuke","arguments":{}}}}) + "\n"); hub4.stdin.flush()
+while True:
+    r4 = json.loads(hub4.stdout.readline())
+    if r4.get("id") == 2: break
+check(r4["result"].get("isError") and "SAFE MODE BLOCKED" in r4["result"]["content"][0]["text"] and time.time() - t4 < 5, f"blocked call does not wait for a listener that may not approve ({time.time() - t4:.1f} s)")
 f4.close(); s4.close(); hub4.stdin.close(); hub4.wait(timeout=30)
 
 # ===================================================================== fifth run: idle unlocked tools are hidden again
@@ -391,6 +397,28 @@ time.sleep(3.5)
 names5b = [t["name"] for t in rpc5({"jsonrpc":"2.0","id":4,"method":"tools/list"})["result"]["tools"]]
 check("git_smart_status" not in names5b and notes5.count("notifications/tools/list_changed") >= 2, f"auto-lock hid it again after 2 s idle and sent list_changed ({notes5.count('notifications/tools/list_changed')} notifications)")
 hub5.stdin.close(); hub5.wait(timeout=30)
+
+# ===================================================================== sixth run: a bridge that is slow to start does not hold up the client
+t6 = time.time()
+hub6 = subprocess.Popen([BIN, "--stdio", "--no-control", "--no-cache", "--bridge=slow:python3", os.path.join(HERE, "slow_server.py")], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+def rpc6(obj):
+    hub6.stdin.write(json.dumps(obj) + "\n"); hub6.stdin.flush()
+    notes = []
+    while True:
+        m = json.loads(hub6.stdout.readline())
+        if "method" in m: notes.append(m["method"]); continue
+        return m, notes
+rpc6({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","clientInfo":{"name":"ctl-test-6","version":"1"}}})
+took6 = time.time() - t6
+hub6.stdin.write(json.dumps({"jsonrpc":"2.0","method":"notifications/initialized"}) + "\n"); hub6.stdin.flush()
+early6, _ = rpc6({"jsonrpc":"2.0","id":2,"method":"tools/list"})
+check(took6 < 11.5 and not any(t_["name"].startswith("slow__") for t_ in early6["result"]["tools"]), f"initialize answered after {took6:.1f} s although the bridge needs 12 s to start")
+time.sleep(max(0, 16 - (time.time() - t6)))
+late6, notes6 = rpc6({"jsonrpc":"2.0","id":3,"method":"tools/list"})
+check("notifications/tools/list_changed" in notes6 and any(t_["name"] == "slow__peek" for t_ in late6["result"]["tools"]), "the late bridge's tools were announced and are listed once it is up")
+r6, _ = rpc6({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"slow__peek","arguments":{"what":"late"}}})
+check(r6["result"]["content"][0]["text"].startswith("echo:peek"), "the late bridge answers calls")
+hub6.stdin.close(); hub6.wait(timeout=30)
 
 print("\n--- hub stderr (tail):"); print("\n".join(stderr_lines[-14:]))
 sys.exit(0 if ok else 1)

@@ -46,6 +46,20 @@ public sealed class McpRouter
 
     public bool Initialized => _initialized;
 
+    /// <summary>A bridge that finished starting after the hub began serving: hook its events up and tell the client what it brought.</summary>
+    public async Task AdoptAsync(McpBridge bridge)
+    {
+        bridge.ToolsChanged -= OnBridgeToolsChanged; bridge.Exited -= OnBridgeExited; // it may have made it into the constructor's list
+        bridge.ToolsChanged += OnBridgeToolsChanged; bridge.Exited += OnBridgeExited;
+        if (_initialized)
+        {
+            await SendToolsListChangedAsync().ConfigureAwait(false);
+            await _transport.SendNotificationAsync("notifications/resources/list_changed", null, _shutdown.Token).ConfigureAwait(false);
+            await _transport.SendNotificationAsync("notifications/prompts/list_changed", null, _shutdown.Token).ConfigureAwait(false);
+        }
+        _control?.EmitToolsChanged();
+    }
+
     // ------------------------------------------------------------------ entry
 
     public ValueTask HandleAsync(JsonRpcMessage msg)
@@ -359,7 +373,7 @@ public sealed class McpRouter
                 outcome = "approved";
                 Log.Info($"'{tool.Name}' auto-approved (remembered for this session)");
             }
-            else if (verdict.Ask && _control is { HasClients: true })
+            else if (verdict.Ask && _control is { CanApprove: true })
             {
                 Log.Info($"holding '{tool.Name}' for approval");
                 ApprovalDecision decision = await _control.RequestApprovalAsync(tool.Name, tool.RiskLevel, reason, args, ct).ConfigureAwait(false);
@@ -503,8 +517,10 @@ public sealed class McpRouter
     /// <summary>Also used by the control hub after Clear cache re-lists a bridge.</summary>
     private async Task ReplaceBridgeToolsAsync(McpBridge bridge, List<ToolDefinition> tools)
     {
+        var unlocked = tools.Select(d => bridge.Name + "__" + d.Name).Where(_registry.IsUnlocked).ToList(); // a re-list must not hide what the model unlocked
         _registry.UnregisterWhere(t => t is BridgedTool bt && string.Equals(bt.BridgeName, bridge.Name, StringComparison.Ordinal));
         foreach (var def in tools) _registry.Register(new BridgedTool(bridge, def));
+        foreach (string name in unlocked) _registry.Unlock(name);
         Log.Info($"bridge '{bridge.Name}' now exposes {tools.Count} tool(s)");
         if (_initialized) await SendToolsListChangedAsync().ConfigureAwait(false);
         _control?.EmitToolsChanged();

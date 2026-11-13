@@ -164,20 +164,7 @@ public sealed class ExternalMcpBridge : McpBridge
 
         try
         {
-            await WriteFrameAsync(w =>
-            {
-                w.WriteStartObject();
-                w.WriteString("jsonrpc"u8, "2.0"u8);
-                w.WritePropertyName("id"u8);
-                id.WriteTo(w);
-                w.WriteString("method"u8, method);
-                if (parameters is not null)
-                {
-                    w.WritePropertyName("params"u8);
-                    parameters.WriteTo(w);
-                }
-                w.WriteEndObject();
-            }, timeoutCts.Token).ConfigureAwait(false); // a child that stopped reading must not hold the write (and the writer lock) forever
+            await WriteFrameAsync(w => JsonRpcFrames.Call(w, id, method, parameters), timeoutCts.Token).ConfigureAwait(false); // a child that stopped reading must not hold the write (and the writer lock) forever
 
             var answer = await tcs.Task.ConfigureAwait(false);
             Volatile.Write(ref _exits, 0);
@@ -203,33 +190,10 @@ public sealed class ExternalMcpBridge : McpBridge
     }
 
     private ValueTask SendNotificationAsync(string method, JsonNode? parameters, CancellationToken ct)
-        => WriteFrameAsync(w =>
-        {
-            w.WriteStartObject();
-            w.WriteString("jsonrpc"u8, "2.0"u8);
-            w.WriteString("method"u8, method);
-            if (parameters is not null)
-            {
-                w.WritePropertyName("params"u8);
-                parameters.WriteTo(w);
-            }
-            w.WriteEndObject();
-        }, ct);
+        => WriteFrameAsync(w => JsonRpcFrames.Call(w, RpcId.None, method, parameters), ct);
 
     private ValueTask SendErrorAsync(RpcId id, int code, string message)
-        => WriteFrameAsync(w =>
-        {
-            w.WriteStartObject();
-            w.WriteString("jsonrpc"u8, "2.0"u8);
-            w.WritePropertyName("id"u8);
-            id.WriteTo(w);
-            w.WritePropertyName("error"u8);
-            w.WriteStartObject();
-            w.WriteNumber("code"u8, code);
-            w.WriteString("message"u8, message);
-            w.WriteEndObject();
-            w.WriteEndObject();
-        }, CancellationToken.None);
+        => WriteFrameAsync(w => JsonRpcFrames.Error(w, id, code, message), CancellationToken.None);
 
     private async ValueTask WriteFrameAsync(Action<Utf8JsonWriter> write, CancellationToken ct)
     {
@@ -299,17 +263,7 @@ public sealed class ExternalMcpBridge : McpBridge
         // Request from child (sampling/roots/elicitation) – not supported by the hub.
         if (string.Equals(msg.Method, "ping", StringComparison.Ordinal))
         {
-            await WriteFrameAsync(w =>
-            {
-                w.WriteStartObject();
-                w.WriteString("jsonrpc"u8, "2.0"u8);
-                w.WritePropertyName("id"u8);
-                msg.Id.WriteTo(w);
-                w.WritePropertyName("result"u8);
-                w.WriteStartObject();
-                w.WriteEndObject();
-                w.WriteEndObject();
-            }, CancellationToken.None).ConfigureAwait(false);
+            await WriteFrameAsync(w => JsonRpcFrames.EmptyResult(w, msg.Id), CancellationToken.None).ConfigureAwait(false);
             return;
         }
         await SendErrorAsync(msg.Id, JsonRpcErrorCodes.MethodNotFound, $"Hubris does not support client method '{msg.Method}'").ConfigureAwait(false);
