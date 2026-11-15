@@ -350,7 +350,7 @@ public sealed class McpRouter
             _control?.EmitToolCall(callId, tool.Name, tool.RiskLevel, "denied", 0, args, refused);
             return refused;
         }
-        var verdict = _security.Evaluate(tool.Name, tool.RiskLevel, args, bridged);
+        var verdict = _security.Evaluate(tool.Name, tool.RiskLevel, args, bridged, canAsk: _control is { CanApprove: true });
         if (!verdict.Allowed)
         {
             string reason = verdict.Reason ?? SecurityInterceptor.BlockedPrefix;

@@ -86,7 +86,7 @@ public sealed class ConfigViewModel : ObservableObject
                 }
                 else
                 {
-                    row.Command = b.Command; row.Args = string.Join(' ', b.Args.Select(Quote));
+                    row.Command = b.Command; row.Args = string.Join(' ', b.Args.Select(ArgLine.Quote));
                     row.EnvCount = b.Env?.Count ?? 0;
                 }
                 Bridges.Add(row);
@@ -102,6 +102,7 @@ public sealed class ConfigViewModel : ObservableObject
         foreach (var row in Bridges)
         {
             if (string.IsNullOrWhiteSpace(row.Name) || string.IsNullOrWhiteSpace(row.Command)) continue;
+            if (!BridgeSpec.IsValidName(row.Name.Trim())) { ReportError($"bridge name '{row.Name.Trim()}': {BridgeSpec.NameRule}"); return; }
             // Fields the row does not show (env, headers, auth, source) follow the entry the row was loaded from, even after a rename.
             string lookup = row.OriginalName.Length > 0 ? row.OriginalName : row.Name.Trim();
             var prev = existing.Bridges.Find(b => b.Name == lookup);
@@ -118,11 +119,13 @@ public sealed class ConfigViewModel : ObservableObject
             }
             cfg.Bridges.Add(new BridgeConfig
             {
-                Name = row.Name.Trim(), Command = row.Command.Trim(), Args = SplitArgs(row.Args),
+                Name = row.Name.Trim(), Command = row.Command.Trim(), Args = ArgLine.Split(row.Args),
                 Env = prev?.Env, Auth = prev?.Auth, Source = source,
             });
         }
-        HubrisConfigFile.Save(cfg);
+        try { HubrisConfigFile.Save(cfg); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { ReportError(ex.Message); return; }
+        foreach (var row in Bridges) row.OriginalName = row.Name.Trim(); // or the next Save looks the hidden env/headers/auth up under a name the file no longer has
         LastResult = $"✓ {cfg.Bridges.Count} bridge(s) saved to {ConfigPath}.";
         AppendLog(LastResult);
         _ = NotifyHubsAsync();
@@ -330,8 +333,8 @@ public sealed class ConfigViewModel : ObservableObject
         get
         {
             var sb = new StringBuilder();
-            sb.Append(string.IsNullOrEmpty(_serverPath) ? "Hubris" : Quote(_serverPath));
-            foreach (var a in BuildServerArgs()) sb.Append(' ').Append(Quote(a));
+            sb.Append(string.IsNullOrEmpty(_serverPath) ? "Hubris" : ArgLine.Quote(_serverPath));
+            foreach (var a in BuildServerArgs()) sb.Append(' ').Append(ArgLine.Quote(a));
             return sb.ToString();
         }
     }
@@ -462,31 +465,6 @@ public sealed class ConfigViewModel : ObservableObject
         LaunchTestCommand.RaiseCanExecuteChanged();
     }
 
-    private static string Quote(string s) => s.Length > 0 && s.IndexOfAny([' ', '"', '\'']) < 0 ? s : "\"" + s.Replace("\"", "\\\"") + "\"";
-
-    /// <summary>Shell-ish split: whitespace separated, double/single quotes group.</summary>
-    public static List<string> SplitArgs(string text)
-    {
-        var result = new List<string>();
-        var cur = new StringBuilder();
-        char quote = '\0';
-        bool any = false;
-        for (int i = 0; i < text.Length; i++)
-        {
-            char c = text[i];
-            if (quote != '\0')
-            {
-                if (c == '\\' && i + 1 < text.Length && text[i + 1] == quote) { cur.Append(quote); i++; continue; } // what Quote() wrote
-                if (c == quote) quote = '\0'; else cur.Append(c);
-                continue;
-            }
-            if (c is '"' or '\'') { quote = c; any = true; continue; }
-            if (char.IsWhiteSpace(c)) { if (any || cur.Length > 0) { result.Add(cur.ToString()); cur.Clear(); any = false; } continue; }
-            cur.Append(c);
-        }
-        if (any || cur.Length > 0) result.Add(cur.ToString());
-        return result;
-    }
 }
 
 public sealed class BridgeRow : ObservableObject

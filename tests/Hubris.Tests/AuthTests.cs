@@ -404,10 +404,26 @@ public class AuthTests : IDisposable
     {
         string dir = Path.Combine(_dir, "late");
         var world = new FakeAuthWorld();
-        var mine = new OAuthTokenProvider(Remote.Name, Remote.Auth!, Remote.Url, new CachingTokenStore(new FileTokenStore(dir)), new HttpClient(world), world.Browser);
+        var now = DateTimeOffset.UtcNow;
+        var mine = new OAuthTokenProvider(Remote.Name, Remote.Auth!, Remote.Url, new CachingTokenStore(new FileTokenStore(dir)), new HttpClient(world), world.Browser, () => now);
         Assert.Null(await mine.GetAccessTokenAsync(CancellationToken.None)); // "none" is now in the memory cache
         new FileTokenStore(dir).Set("notion", new StoredToken { AccessToken = "A1", TokenEndpoint = "https://as.test/token", ClientId = "cid-1" }); // the other hub's login
+        Assert.Null(await mine.GetAccessTokenAsync(CancellationToken.None)); // asked a moment ago: the store is not read on every request
+        mine.RecheckStore();                                                  // what the desktop's "signed in elsewhere" message does
         Assert.Equal("A1", await mine.GetAccessTokenAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Bridge_without_a_sign_in_reads_the_store_every_few_seconds_not_on_every_call()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var store = new CountingStore();
+        var provider = new OAuthTokenProvider(Remote.Name, Remote.Auth!, Remote.Url, store, new HttpClient(new FakeAuthWorld()), null, () => now);
+        for (int i = 0; i < 10; i++) Assert.Null(await provider.GetAccessTokenAsync(CancellationToken.None));
+        Assert.Equal(11, store.Gets); // ten reads of the memory side, one look past it
+        now = now.AddSeconds(OAuthTokenProvider.MissRecheckSec);
+        await provider.GetAccessTokenAsync(CancellationToken.None);
+        Assert.Equal(13, store.Gets);
     }
 
     [Fact]

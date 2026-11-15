@@ -14,6 +14,12 @@ public sealed record BridgeSpec(
     string Name, string Command, IReadOnlyList<string> Args, IReadOnlyDictionary<string, string>? Env = null,
     string? Url = null, IReadOnlyDictionary<string, string>? Headers = null, string? Transport = null, OAuthSpec? Auth = null)
 {
+    public const string NameRule = "letters, digits, '-' and '_' only, and no double underscore (it separates the bridge from the tool)";
+
+    /// <summary>The name becomes the prefix of every tool and prompt ("name__tool"), so it must be a clean identifier.</summary>
+    public static bool IsValidName(string name)
+        => name.Length > 0 && !name.Contains("__", StringComparison.Ordinal) && name.All(c => char.IsLetterOrDigit(c) || c is '-' or '_');
+
     public bool IsRemote => !string.IsNullOrEmpty(Url);
     public string TransportName => IsRemote ? (string.Equals(Transport, "sse", StringComparison.OrdinalIgnoreCase) ? "sse" : "http") : "stdio";
 
@@ -23,9 +29,43 @@ public sealed record BridgeSpec(
         : Hubris.Caching.ToolCacheStore.ComputeHash(Command, Args, Env?.Keys ?? []);
 }
 
+/// <summary>One line of text for a list of arguments, as the desktop app shows and edits them.</summary>
+public static class ArgLine
+{
+    /// <summary>Plain when it can be; otherwise in double quotes with \ and " escaped, so <see cref="Split"/> gives back exactly this argument.</summary>
+    public static string Quote(string s)
+    {
+        if (s.Length > 0 && !s.Any(c => char.IsWhiteSpace(c) || c is '"' or '\'')) return s;
+        return "\"" + s.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
+    }
+
+    /// <summary>Shell-ish split: whitespace separates, double or single quotes group, and inside quotes \ escapes a backslash or the quote.</summary>
+    public static List<string> Split(string text)
+    {
+        var result = new List<string>();
+        var cur = new System.Text.StringBuilder();
+        char quote = '\0';
+        bool any = false;
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c = text[i];
+            if (quote != '\0')
+            {
+                if (c == '\\' && i + 1 < text.Length && (text[i + 1] == quote || text[i + 1] == '\\')) { cur.Append(text[++i]); continue; }
+                if (c == quote) quote = '\0'; else cur.Append(c);
+                continue;
+            }
+            if (c is '"' or '\'') { quote = c; any = true; continue; }
+            if (char.IsWhiteSpace(c)) { if (any || cur.Length > 0) { result.Add(cur.ToString()); cur.Clear(); any = false; } continue; }
+            cur.Append(c);
+        }
+        if (any || cur.Length > 0) result.Add(cur.ToString());
+        return result;
+    }
+}
+
 public sealed class CliOptions
 {
-    public bool Stdio { get; private set; } = true;
     public ExecutionMode Mode { get; private set; } = ExecutionMode.Safe;
     public bool Compact { get; private set; }
     public bool Verbose { get; private set; }
@@ -82,7 +122,7 @@ public sealed class CliOptions
             string a = args[i];
             switch (a)
             {
-                case "--stdio": options.Stdio = true; continue;
+                case "--stdio": continue; // the only transport; accepted because client configs carry it
                 case "--compact": options.Compact = true; continue;
                 case "--verbose" or "-v": options.Verbose = true; continue;
                 case "--install-vscode": options.InstallVsCode = true; continue;
@@ -145,8 +185,7 @@ public sealed class CliOptions
                 if (colon <= 0 || colon == spec.Length - 1) { error = $"invalid --bridge spec '{spec}' (expected <name>:<command>)"; return false; }
                 string name = spec[..colon];
                 string command = spec[(colon + 1)..];
-                foreach (char c in name)
-                    if (!char.IsLetterOrDigit(c) && c != '-' && c != '_') { error = $"bridge name '{name}' may contain only letters, digits, '-' and '_'"; return false; }
+                if (!BridgeSpec.IsValidName(name)) { error = $"bridge name '{name}': {BridgeSpec.NameRule}"; return false; }
 
                 // Child servers take their own --flags; only Hubris's options end the bridge's argument list.
                 var bridgeArgs = new List<string>();

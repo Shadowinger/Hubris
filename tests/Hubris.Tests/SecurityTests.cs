@@ -146,6 +146,19 @@ public class ResultPassThroughTests
     }
 }
 
+public class DlpTimeLimitTests
+{
+    [Fact]
+    public void Text_built_to_make_a_pattern_crawl_is_withheld_not_scanned_for_minutes()
+    {
+        string flood = string.Concat(Enumerable.Repeat("-----BEGIN PRIVATE KEY-----\n", 60_000)); // no END line: every header makes the pattern read to the end
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        Assert.Equal(DlpSanitizer.Withheld, DlpSanitizer.Sanitize(flood));
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(6), $"took {clock.Elapsed.TotalSeconds:0.0} s");
+        Assert.Equal("password=***", DlpSanitizer.Sanitize("password=hunter2secret")); // ordinary text is still masked, not withheld
+    }
+}
+
 public class ControlTrustTests
 {
     [Theory]
@@ -175,6 +188,18 @@ public class AutoModeTests
 
     private static JsonObject Args(string key, string value) => new() { [key] = value };
     private static SecurityVerdict Auto(string tool, ToolRiskLevel risk, string arg = "x") => new SecurityInterceptor(ExecutionMode.Auto).Evaluate(tool, risk, Args("a", arg), bridged: true);
+
+    [Fact]
+    public void Paused_auto_mode_keeps_answering_the_model_when_nobody_can_approve()
+    {
+        var s = new SecurityInterceptor(ExecutionMode.Auto);
+        for (int i = 0; i < SecurityInterceptor.AutoMaxConsecutiveBlocks; i++) s.Evaluate("sh__run", ToolRiskLevel.Mutating, Args("cmd", "git push --force"), bridged: true);
+        Assert.True(s.AutoPaused);
+        var alone = s.Evaluate("sh__run", ToolRiskLevel.Mutating, Args("cmd", "git push --force"), bridged: true, canAsk: false);
+        Assert.False(alone.Ask);
+        Assert.Contains("Do not repeat it", alone.Reason);
+        Assert.True(s.Evaluate("sh__run", ToolRiskLevel.Mutating, Args("cmd", "git push --force"), bridged: true).Ask); // with the app attached it asks, as before
+    }
 
     [Fact]
     public void Mode_name_parses_and_prints()

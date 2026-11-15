@@ -298,6 +298,7 @@ public static class ClientConfigHijacker
     {
         var chars = raw.Trim().Select(c => char.IsLetterOrDigit(c) || c is '-' or '_' ? c : '-').ToArray();
         string name = new(chars);
+        while (name.Contains("__", StringComparison.Ordinal)) name = name.Replace("__", "_"); // "__" separates the bridge from the tool
         return name.Length == 0 ? "bridge" : name;
     }
 

@@ -120,11 +120,21 @@ public static class HubrisConfigFile
         Log.Info($"config written: {path} ({config.Bridges.Count} bridge(s))");
     }
 
-    public static List<BridgeSpec> ToSpecs(HubrisConfig config)
+    /// <param name="rejected">Receives the entries left out because of their name, with the reason.</param>
+    public static List<BridgeSpec> ToSpecs(HubrisConfig config, IDictionary<string, string>? rejected = null)
     {
         var list = new List<BridgeSpec>(config.Bridges.Count);
         foreach (var b in config.Bridges)
-            if (!string.IsNullOrWhiteSpace(b.Name) && (!string.IsNullOrWhiteSpace(b.Command) || b.IsRemote)) list.Add(b.ToSpec());
+        {
+            if (string.IsNullOrWhiteSpace(b.Name) || (string.IsNullOrWhiteSpace(b.Command) && !b.IsRemote)) continue;
+            if (!BridgeSpec.IsValidName(b.Name))
+            {
+                Log.Warn($"bridge '{b.Name}' skipped: {BridgeSpec.NameRule}");
+                if (rejected is not null) rejected[b.Name] = "name not usable: " + BridgeSpec.NameRule;
+                continue;
+            }
+            list.Add(b.ToSpec());
+        }
         return list;
     }
 }

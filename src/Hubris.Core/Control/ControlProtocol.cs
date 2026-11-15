@@ -41,6 +41,8 @@ public sealed class ControlMessage
     [JsonPropertyName("tools")] public List<ToolInfo>? Tools { get; set; }
     [JsonPropertyName("bridges")] public List<string>? Bridges { get; set; }
     [JsonPropertyName("bridgesStale")] public List<string>? BridgesStale { get; set; }
+    /// <summary>status: bridges from the config that did not start, name → reason.</summary>
+    [JsonPropertyName("bridgesFailed")] public Dictionary<string, string>? BridgesFailed { get; set; }
     [JsonPropertyName("decisions")] public List<ToolDecision>? Decisions { get; set; }
     /// <summary>OAuth state per bridge that has an auth block.</summary>
     [JsonPropertyName("auth")] public List<AuthInfo>? Auth { get; set; }
@@ -141,7 +143,6 @@ public static class ControlTypes
     public const string Reveal = "reveal";
     public const string Lock = "lock";
     public const string Forget = "forget";
-    public const string ListDecisions = "list_decisions";
     public const string ClearCache = "clear_cache";
     public const string ReloadConfig = "reload_config";
     public const string Shutdown = "shutdown";

@@ -223,8 +223,11 @@ public sealed class HubViewModel : ObservableObject
         Clients = m.Clients ?? 0;
         ApplyContext(m.ActiveTools, m.ActiveTokens, m.TotalTokens);
         ApplyAuth(m.Auth);
+        foreach (var kv in m.BridgesFailed ?? [])
+            if (_failuresShown.Add(kv.Key + "\n" + kv.Value)) AddEvent(EventRow.Error($"bridge '{kv.Key}' did not start: {kv.Value}"));
     }
 
+    private readonly HashSet<string> _failuresShown = new(); // the status repeats every 2 s; each failure is one row
     public ObservableCollection<AuthRow> Auth { get; } = new();
     public bool HasAuth => Auth.Count > 0;
 

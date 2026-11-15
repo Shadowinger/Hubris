@@ -28,6 +28,8 @@ public sealed class HubRuntime
     public ConcurrentQueue<McpBridge> Bridges { get; } = new();
     /// <summary>Resources, templates and prompts per bridge name, served to the client as one list.</summary>
     public ConcurrentDictionary<string, BridgeExtras> Extras { get; } = new(StringComparer.Ordinal);
+    /// <summary>Bridges from the config that are not running here, with the reason: shown by hub_status and the desktop app, since nobody reads the hub's stderr.</summary>
+    public ConcurrentDictionary<string, string> BridgeFailures { get; } = new(StringComparer.Ordinal);
     public McpBridge? Bridge(string name) { foreach (var b in Bridges) if (b.Name == name) return b; return null; }
     public int BridgeCount => Bridges.Count;
     public int BridgesRunning { get { int n = 0; foreach (var b in Bridges) if (b.IsAlive) n++; return n; } }

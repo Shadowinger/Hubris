@@ -91,6 +91,7 @@ public sealed class HubStatusTool : IMcpTool
         sb.Append(" gc=").Append(GC.CollectionCount(0)).Append('/').Append(GC.CollectionCount(1)).Append('/').Append(GC.CollectionCount(2));
         sb.Append(" tools=").Append(tools).Append(" (pinned ").Append(pinned).Append(", on-demand ").Append(tools - pinned).Append(", bridged ").Append(bridged).Append(')');
         sb.Append(" bridges=").Append(_rt.BridgeCount).Append(" (").Append(_rt.BridgesRunning).Append(" running)");
+        if (!_rt.BridgeFailures.IsEmpty) sb.Append(" failed=").Append(string.Join(',', _rt.BridgeFailures.Keys.Order(StringComparer.Ordinal)));
         int resources = 0, templates = 0, prompts = 0;
         foreach (var kv in _rt.Extras) { resources += kv.Value.Resources.Count; templates += kv.Value.ResourceTemplates.Count; prompts += kv.Value.Prompts.Count; }
         if (resources + templates + prompts > 0) sb.Append(" resources=").Append(resources).Append('+').Append(templates).Append(" prompts=").Append(prompts);

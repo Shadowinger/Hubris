@@ -242,7 +242,8 @@ public sealed class SecurityInterceptor
     public long BlockedCount => Interlocked.Read(ref _blocked);
 
     /// <param name="bridged">A bridge's own readOnlyHint is not trusted: its arguments are still scanned.</param>
-    public SecurityVerdict Evaluate(string toolName, ToolRiskLevel risk, JsonObject? arguments, bool bridged = false)
+    /// <param name="canAsk">Somebody is there to approve. Without one, a paused auto mode keeps answering the model instead of pointing it at an app that is not open.</param>
+    public SecurityVerdict Evaluate(string toolName, ToolRiskLevel risk, JsonObject? arguments, bool bridged = false, bool canAsk = true)
     {
         var mode = Mode;
         if (risk == ToolRiskLevel.ReadOnly && !bridged) return SecurityVerdict.Ok;
@@ -255,7 +256,7 @@ public sealed class SecurityInterceptor
             return SecurityVerdict.Blocked($"{CriticalPrefix} Tool='{toolName}' Matched: rm on a critical path.", patternHit: true);
         }
         if (mode == ExecutionMode.Bypass) return SecurityVerdict.Ok;
-        if (mode == ExecutionMode.Auto) return EvaluateAuto(toolName, risk, arguments);
+        if (mode == ExecutionMode.Auto) return EvaluateAuto(toolName, risk, arguments, canAsk);
 
         if (risk == ToolRiskLevel.Destructive)
         {
@@ -280,7 +281,7 @@ public sealed class SecurityInterceptor
     /// model with the reason so it can try something else; only after 3 blocks in a row or 20 in total does the
     /// next blocked call wait for the user, and an approval lets auto mode decide alone again.
     /// </summary>
-    private SecurityVerdict EvaluateAuto(string toolName, ToolRiskLevel risk, JsonObject? arguments)
+    private SecurityVerdict EvaluateAuto(string toolName, ToolRiskLevel risk, JsonObject? arguments, bool canAsk)
     {
         var hits = PatternHits(arguments);
         // A tool the user allowed for the session is allowed by name; its arguments are still judged.
@@ -291,7 +292,7 @@ public sealed class SecurityInterceptor
             return SecurityVerdict.Ok;
         }
 
-        bool ask = AutoPaused; // decided before this block counts: the third block in a row is still answered, the fourth asks
+        bool ask = canAsk && AutoPaused; // decided before this block counts: the third block in a row is still answered, the fourth asks
         Interlocked.Increment(ref _blocked);
         Interlocked.Increment(ref _autoRun);
         Interlocked.Increment(ref _autoTotal);

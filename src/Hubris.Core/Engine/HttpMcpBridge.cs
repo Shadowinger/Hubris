@@ -60,7 +60,10 @@ public sealed class HttpMcpBridge : McpBridge
     public static SocketsHttpHandler DefaultHandler() => new()
     {
         PooledConnectionLifetime = TimeSpan.FromMinutes(10),
-        AutomaticDecompression = DecompressionMethods.All,
+        // Not Brotli: its decoder had an out-of-bounds write (CVE-2026-111497), and every remote server chooses the encoding.
+        AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
+        // A redirect would carry the configured headers (API keys) to whatever host the server names.
+        AllowAutoRedirect = false,
     };
 
     public Uri Url => _url;
@@ -259,6 +262,8 @@ public sealed class HttpMcpBridge : McpBridge
     private async Task ThrowOnFailureAsync(HttpResponseMessage resp, CancellationToken ct)
     {
         if (resp.IsSuccessStatusCode) return;
+        if ((int)resp.StatusCode is >= 300 and < 400 && resp.Headers.Location is { } moved)
+            throw new McpBridgeException(JsonRpcErrorCodes.InternalError, $"HTTP {(int)resp.StatusCode} from {_url.Host}: the server redirects to {moved}; redirects are not followed, put that address into the bridge's url");
         if (resp.StatusCode == HttpStatusCode.NotFound && _sessionId is not null)
         {
             _dead = true;

@@ -26,8 +26,6 @@ public sealed class ToolCacheStore : IDisposable
         _ttl = ttl;
     }
 
-    public string Path => _path;
-    public TimeSpan Ttl => _ttl;
     public long Hits => Interlocked.Read(ref _hits);
     public long Misses => Interlocked.Read(ref _misses);
 

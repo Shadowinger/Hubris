@@ -166,6 +166,45 @@ public class ConfigTests : IDisposable
         Assert.Equal(last, ClientConfigHijacker.LatestBackup(path));
     }
 
+    [Theory]
+    [InlineData("plain")]
+    [InlineData("")]
+    [InlineData("two words")]
+    [InlineData("it's")]
+    [InlineData("a\tb")]                         // a tab alone used to split the argument
+    [InlineData("line1\nline2")]
+    [InlineData("C:\\my dir\\")]                 // a space and a trailing backslash used to end in a quote
+    [InlineData("say \"hi\" \\ bye")]
+    [InlineData("{\"k\":\"v w\"}")]
+    public void Argument_line_gives_back_the_arguments_it_was_made_from(string arg)
+    {
+        string[] args = [arg, "-y", arg];
+        Assert.Equal(args, Hubris.Cli.ArgLine.Split(string.Join(' ', args.Select(Hubris.Cli.ArgLine.Quote))));
+    }
+
+    [Fact]
+    public void Hand_typed_argument_lines_split_like_a_shell()
+        => Assert.Equal(["-y", "@scope/pkg", "C:\\dir\\file", "two words", "it's"], Hubris.Cli.ArgLine.Split("-y @scope/pkg C:\\dir\\file 'two words'  \"it's\""));
+
+    [Theory]
+    [InlineData("fs", true)]
+    [InlineData("my-server_2", true)]
+    [InlineData("a__b", false)]                  // "__" separates the bridge from the tool
+    [InlineData("my server", false)]
+    [InlineData("", false)]
+    public void Bridge_names_follow_one_rule(string name, bool ok) => Assert.Equal(ok, Hubris.Cli.BridgeSpec.IsValidName(name));
+
+    [Fact]
+    public void Config_entries_with_an_unusable_name_are_left_out_and_reported()
+    {
+        var cfg = new HubrisConfig();
+        cfg.Bridges.Add(new BridgeConfig { Name = "ok", Command = "x" });
+        cfg.Bridges.Add(new BridgeConfig { Name = "a__b", Command = "x" });
+        var rejected = new Dictionary<string, string>();
+        Assert.Equal(["ok"], HubrisConfigFile.ToSpecs(cfg, rejected).Select(s => s.Name));
+        Assert.Contains("double underscore", rejected["a__b"]);
+    }
+
     [Fact]
     public void Vscode_hijack_uses_servers_key_and_stdio_type()
     {

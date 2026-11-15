@@ -9,46 +9,49 @@ namespace Hubris.Security;
 public static partial class DlpSanitizer
 {
     private const RegexOptions Opts = RegexOptions.CultureInvariant;
+    /// <summary>Per pattern and text, in ms. Ordinary text of 16 MB takes well under a second for all patterns together; text built to make a pattern crawl is withheld instead.</summary>
+    private const int Timeout = 2000;
+    public const string Withheld = "[Hubris: this text could not be checked for secrets in time and was withheld]";
 
     // key=value / key: value style secrets (connection strings, env dumps, YAML, INI)
     // key=value / key: value / "key": "value" / PREFIX_KEY=value; a purely numeric value ("Token: 1814") is a count, not a secret
-    [GeneratedRegex(@"(?i)(?<![A-Za-z0-9])(password|passwd|pwd|secret|client[_-]?secret|token|access[_-]?token|refresh[_-]?token|api[_-]?key|apikey|secret[_-]?access[_-]?key|access[_-]?key|accesskey|secret[_-]?key|private[_-]?key)([""']?\s*[=:]\s*[""']?)(?!\*\*\*)(?=[^;,\s""'&]*[^0-9;,\s""'&])([^;,\s""'&]+)", Opts)]
+    [GeneratedRegex(@"(?i)(?<![A-Za-z0-9])(password|passwd|pwd|secret|client[_-]?secret|token|access[_-]?token|refresh[_-]?token|api[_-]?key|apikey|secret[_-]?access[_-]?key|access[_-]?key|accesskey|secret[_-]?key|private[_-]?key)([""']?\s*[=:]\s*[""']?)(?!\*\*\*)(?=[^;,\s""'&]*[^0-9;,\s""'&])([^;,\s""'&]+)", Opts, Timeout)]
     private static partial Regex KeyValueSecret();
 
     // OpenAI / Anthropic style keys
-    [GeneratedRegex(@"\bsk-(?:ant-|proj-|live-|test-)?[A-Za-z0-9_\-]{16,}\b", Opts)]
+    [GeneratedRegex(@"\bsk-(?:ant-|proj-|live-|test-)?[A-Za-z0-9_\-]{16,}\b", Opts, Timeout)]
     private static partial Regex SkKey();
 
     // GitHub tokens: ghp_, gho_, ghu_, ghs_, ghr_, github_pat_
-    [GeneratedRegex(@"\b(gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{60,})\b", Opts)]
+    [GeneratedRegex(@"\b(gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{60,})\b", Opts, Timeout)]
     private static partial Regex GitHubToken();
 
-    [GeneratedRegex(@"\b(AKIA|ASIA)[0-9A-Z]{16}\b", Opts)]
+    [GeneratedRegex(@"\b(AKIA|ASIA)[0-9A-Z]{16}\b", Opts, Timeout)]
     private static partial Regex AwsAccessKey();
 
-    [GeneratedRegex(@"(?i)\bBearer\s+[A-Za-z0-9\-._~+/]{16,}=*", Opts)]
+    [GeneratedRegex(@"(?i)\bBearer\s+[A-Za-z0-9\-._~+/]{16,}=*", Opts, Timeout)]
     private static partial Regex BearerToken();
 
-    [GeneratedRegex(@"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b", Opts)]
+    [GeneratedRegex(@"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b", Opts, Timeout)]
     private static partial Regex Jwt();
 
-    [GeneratedRegex(@"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----", Opts)]
+    [GeneratedRegex(@"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----", Opts, Timeout)]
     private static partial Regex PemPrivateKey();
 
     // Czech / Slovak rodné číslo written the usual way, YYMMDD/XXX(X); the slash is required so that plain
     // 10-digit ids and timestamps (1.3 % of which pass the mod-11 test) are left alone
-    [GeneratedRegex(@"\b\d{2}(0[1-9]|1[0-2]|2[1-9]|3[0-2]|5[1-9]|6[0-2]|7[1-9]|8[0-2])(0[1-9]|[12]\d|3[01])\s?/\s?\d{3,4}\b", Opts)]
+    [GeneratedRegex(@"\b\d{2}(0[1-9]|1[0-2]|2[1-9]|3[0-2]|5[1-9]|6[0-2]|7[1-9]|8[0-2])(0[1-9]|[12]\d|3[01])\s?/\s?\d{3,4}\b", Opts, Timeout)]
     private static partial Regex RodneCislo();
 
     // IBAN (validated with mod 97) and payment card numbers (validated with Luhn)
-    [GeneratedRegex(@"\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){2,7}(?:\s?[A-Z0-9]{1,3})?\b", Opts)]
+    [GeneratedRegex(@"\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){2,7}(?:\s?[A-Z0-9]{1,3})?\b", Opts, Timeout)]
     private static partial Regex Iban();
 
-    [GeneratedRegex(@"\b(?:\d[ -]?){12,18}\d\b", Opts)]
+    [GeneratedRegex(@"\b(?:\d[ -]?){12,18}\d\b", Opts, Timeout)]
     private static partial Regex CardNumber();
 
     // Slack tokens
-    [GeneratedRegex(@"\bxox[abprs]-[A-Za-z0-9-]{10,}\b", Opts)]
+    [GeneratedRegex(@"\bxox[abprs]-[A-Za-z0-9-]{10,}\b", Opts, Timeout)]
     private static partial Regex SlackToken();
 
     private static long _redactions;
@@ -60,6 +63,16 @@ public static partial class DlpSanitizer
     {
         if (string.IsNullOrEmpty(input)) return input;
 
+        try { return SanitizeCore(input); }
+        catch (RegexMatchTimeoutException)
+        {
+            Interlocked.Increment(ref _redactions);
+            return Withheld; // unscanned text must not reach the model
+        }
+    }
+
+    private static string SanitizeCore(string input)
+    {
         string s = input;
 
         s = Replace(PemPrivateKey(), s, static _ => "-----BEGIN PRIVATE KEY----- *** REDACTED *** -----END PRIVATE KEY-----");

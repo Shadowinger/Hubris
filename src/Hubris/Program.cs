@@ -98,7 +98,7 @@ registry.Register(new FsReadHeadTool(pinned: !opts.Compact));
 
 // Bridges come from ~/.hubris/config.json; a --bridge on the command line adds to or overrides them by name.
 var bridgeSpecs = new List<BridgeSpec>();
-try { bridgeSpecs.AddRange(HubrisConfigFile.ToSpecs(HubrisConfigFile.Load())); }
+try { bridgeSpecs.AddRange(HubrisConfigFile.ToSpecs(HubrisConfigFile.Load(), runtime.BridgeFailures)); }
 catch (Exception ex) when (ex is System.Text.Json.JsonException or IOException) { Log.Warn($"config {HubrisPaths.ConfigPath} ignored: {ex.Message}"); }
 foreach (var cli in opts.Bridges)
 {
@@ -108,10 +108,10 @@ foreach (var cli in opts.Bridges)
 
 var bridges = runtime.Bridges;
 var bridgeHost = new BridgeHost(runtime, registry);
-// All at once, and for 10 s at most: a client gives the hub ~30 s to answer initialize, and one bridge that hangs
-// eats that alone. Whatever is still starting joins later and is announced with tools/list_changed.
+// All at once, and for 2 s at most: a bridge that fails is never cached, so a broken or slow one would be waited for
+// on every start. Whatever is still starting joins later and is announced with tools/list_changed.
 var adds = bridgeSpecs.Select(spec => bridgeHost.AddAsync(spec, shutdown.Token)).ToArray();
-await Task.WhenAny(Task.WhenAll(adds), Task.Delay(TimeSpan.FromSeconds(10)));
+await Task.WhenAny(Task.WhenAll(adds), Task.Delay(TimeSpan.FromSeconds(2)));
 var late = adds.Where(a => !a.IsCompleted).ToArray();
 if (late.Length > 0) Log.Warn($"{late.Length} bridge(s) still starting; their tools are announced when they are ready");
 toolCache?.MaintainIfDue(TimeSpan.FromDays(7)); // after the bridges: never on the startup path, never fatal

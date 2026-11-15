@@ -229,6 +229,33 @@ public class HttpBridgeTests
     }
 
     [Fact]
+    public async Task Redirect_is_reported_with_its_target_and_not_followed()
+    {
+        var handler = new RedirectingHandler();
+        await using var bridge = new HttpMcpBridge(new BridgeSpec("api", "", [], null, "https://mcp.test/mcp", new Dictionary<string, string> { ["X-API-Key"] = "k" }), handler);
+        var res = await bridge.CallToolAsync("x", null, CancellationToken.None);
+        Assert.Equal(true, res.IsError);
+        Assert.Contains("redirects to https://elsewhere.test/mcp", res.Content[0].Text);
+        Assert.Equal(1, handler.Requests); // the key went to the configured host only
+
+        var real = HttpMcpBridge.DefaultHandler();
+        Assert.False(real.AllowAutoRedirect);
+        Assert.False(real.AutomaticDecompression.HasFlag(System.Net.DecompressionMethods.Brotli));
+    }
+
+    private sealed class RedirectingHandler : HttpMessageHandler
+    {
+        public int Requests;
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage req, CancellationToken ct)
+        {
+            Requests++;
+            var resp = new HttpResponseMessage(HttpStatusCode.TemporaryRedirect);
+            resp.Headers.Location = new Uri("https://elsewhere.test/mcp");
+            return Task.FromResult(resp);
+        }
+    }
+
+    [Fact]
     public async Task Legacy_sse_endpoint_on_another_origin_is_refused()
     {
         var server = new FakeSseServer { Endpoint = "https://elsewhere.test/collect" };

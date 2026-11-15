@@ -370,6 +370,11 @@ while True:
     st4 = json.loads(f4.readline())
     if st4["type"] == "status": break
 check(st4["mode"] == "Safe", "mode unchanged after the refused command")
+s4.sendall((json.dumps({"type":"deny","approvalId":"x","remember":True,"reqId":3}) + "\n").encode())
+while True:
+    ack4d = json.loads(f4.readline())
+    if ack4d["type"] == "ack" and ack4d.get("reqId") == 3: break  # the ack of get_status is still in the stream
+check(ack4d["ok"] is False and "desktop app" in ack4d["error"], "deny from a non-desktop process is refused too (with remember it would deny-list a tool)")
 # this client cannot approve anything, so a blocked call must come back at once instead of waiting 120 s for an Approve that would be refused
 t4 = time.time()
 hub4.stdin.write(json.dumps({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"mcp_execute_tool","arguments":{"toolName":"py__nuke","arguments":{}}}}) + "\n"); hub4.stdin.flush()
@@ -400,7 +405,7 @@ hub5.stdin.close(); hub5.wait(timeout=30)
 
 # ===================================================================== sixth run: a bridge that is slow to start does not hold up the client
 t6 = time.time()
-hub6 = subprocess.Popen([BIN, "--stdio", "--no-control", "--no-cache", "--bridge=slow:python3", os.path.join(HERE, "slow_server.py")], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+hub6 = subprocess.Popen([BIN, "--stdio", "--no-control", "--no-cache", "--bridge=slow:python3", os.path.join(HERE, "slow_server.py"), "--bridge=bad:/nonexistent/hubris-e2e-server"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
 def rpc6(obj):
     hub6.stdin.write(json.dumps(obj) + "\n"); hub6.stdin.flush()
     notes = []
@@ -412,12 +417,14 @@ rpc6({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"
 took6 = time.time() - t6
 hub6.stdin.write(json.dumps({"jsonrpc":"2.0","method":"notifications/initialized"}) + "\n"); hub6.stdin.flush()
 early6, _ = rpc6({"jsonrpc":"2.0","id":2,"method":"tools/list"})
-check(took6 < 11.5 and not any(t_["name"].startswith("slow__") for t_ in early6["result"]["tools"]), f"initialize answered after {took6:.1f} s although the bridge needs 12 s to start")
-time.sleep(max(0, 16 - (time.time() - t6)))
+check(took6 < 4 and not any(t_["name"].startswith("slow__") for t_ in early6["result"]["tools"]), f"initialize answered after {took6:.1f} s although the bridge needs 5 s to start")
+time.sleep(max(0, 8 - (time.time() - t6)))
 late6, notes6 = rpc6({"jsonrpc":"2.0","id":3,"method":"tools/list"})
 check("notifications/tools/list_changed" in notes6 and any(t_["name"] == "slow__peek" for t_ in late6["result"]["tools"]), "the late bridge's tools were announced and are listed once it is up")
 r6, _ = rpc6({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"slow__peek","arguments":{"what":"late"}}})
 check(r6["result"]["content"][0]["text"].startswith("echo:peek"), "the late bridge answers calls")
+st6, _ = rpc6({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"hub_status"}})
+check(" failed=bad " in st6["result"]["content"][0]["text"], "a bridge that could not start is named in hub_status")
 hub6.stdin.close(); hub6.wait(timeout=30)
 
 print("\n--- hub stderr (tail):"); print("\n".join(stderr_lines[-14:]))

@@ -53,14 +53,16 @@ client ──stdio──▶ Hubris ──stdio──▶ bridge 1 (npx …)
   key names (url, transport and header names for a remote server), with a TTL (`--cache-ttl`, default 24 h).
   On the next start the definitions are served from the cache; the child process is only started, or the
   remote session only opened, on the first real call to one of its tools.
-  A bridge that is not in the cache is started at once, and the hub waits at most 10 s for it: one that is slower
-  joins later and its tools are announced with `tools/list_changed`, so a slow server cannot make the client give up on the hub.
+  A bridge that is not in the cache is started at once, and the hub waits at most 2 s for it: one that is slower
+  joins later and its tools are announced with `tools/list_changed`, so a slow or broken server does not hold up the client.
+  A bridge that could not start is named, with the reason, in `hub_status` (`failed=…`) and in the desktop app's call list.
   A child that exits is started again by the next call; after four exits in a row without an answer its tools
   are withdrawn until Clear cache or a restart.
 - **Remote servers.** A bridge with a `url` instead of a `command` is reached over HTTP: Streamable HTTP
   (POST per message, JSON or event-stream answers, `Mcp-Session-Id`) by default, the older HTTP+SSE pair with
   `"transport": "sse"` (its announced endpoint must be on the server's own origin). Answers are capped at
-  64 MB, like a child's lines. Headers from the config go on every request, so a bearer token or API key works;
+  64 MB, like a child's lines. Headers from the config go on every request, so a bearer token or API key works; redirects are not followed
+  (the headers would go to another host; the error names the target), and Brotli is not accepted as a response encoding;
   an expired session is reopened on the next call, and the server's tools stay listed in between.
   A server that answers 401 without an auth block fails the call with a hint to add a header or an auth block.
 - **OAuth.** A bridge with `"auth": { "type": "oauth" }` signs in through the browser: Hubris discovers the
@@ -107,7 +109,8 @@ client ──stdio──▶ Hubris ──stdio──▶ bridge 1 (npx …)
   are passed on as the server sent them) is scanned for API keys and `key=value` / `"key": "value"` secrets (password, token,
   secret, api key and the like, also as `DATABASE_PASSWORD=`), bearer tokens and JWTs, private keys, Slack
   tokens, card numbers (Luhn-checked), IBANs (mod-97-checked) and Czech birth numbers written with a slash;
-  the values are masked before they reach the model.
+  the values are masked before they reach the model. Each pattern has 2 s per text; a text that makes one run
+  longer is withheld whole instead of passed on unscanned.
 - **Takeover.** The desktop app scans the MCP configs of Claude Desktop, Claude Code (including per-project
   entries in `~/.claude.json`), Cursor, Windsurf, VS Code and project-level `.mcp.json` / `.cursor/mcp.json` /
   `.vscode/mcp.json`, imports the servers (commands and `url` entries, with their headers) into
@@ -166,7 +169,8 @@ Connect in the desktop app once. Refreshes happen in the background and never op
 `${NAME}` in env and header values is read from the hub's environment at start; the file keeps the
 placeholder. They can also be given on the command line with `--bridge=name:command arg…` or
 `--bridge=name:https://host/mcp "Authorization: Bearer …"` (`sse:https://…` for the older transport).
-Bridged tools show up as `fs__read_file`, `gh__create_issue`, `linear__create_issue` and so on.
+Bridged tools show up as `fs__read_file`, `gh__create_issue`, `linear__create_issue` and so on; a bridge name
+is letters, digits, `-` and `_`, without a double underscore.
 
 ## Usage
 
@@ -180,7 +184,7 @@ Built-in tools: `hub_status`, `git_smart_status`, `fs_read_head`, `mcp_search_to
 
 The control socket is `~/.hubris/run/<pid>.sock`; the desktop app finds running hubs through it, and the
 following commands are available over it: `get_status`, `list_tools`, `set_mode`, `approve`, `deny`, `forget`,
-`list_decisions`, `reveal`, `lock`, `clear_cache`, `reload_config`, `shutdown`, `oauth_start`,
+`reveal`, `lock`, `clear_cache`, `reload_config`, `shutdown`, `oauth_start`,
 `oauth_revoke`. The socket is 0600, and the commands that change what the hub does (mode, approvals, locks,
 cache, config, OAuth, shutdown) are accepted only from the `Hubris.Desktop` binary in the hub's own folder
 (the same bundle or install), compared by the full path the kernel reports for the peer; the bridges and
@@ -214,7 +218,7 @@ tests/run.sh                        # unit tests, warning-free AOT publish, e2e 
 dotnet test tests/Hubris.Tests      # unit tests only
 ```
 
-212 xUnit tests and 91 end-to-end checks (`tests/e2e/control_test.py` drives a published binary with a Python
+232 xUnit tests and 93 end-to-end checks (`tests/e2e/control_test.py` drives a published binary with a Python
 stdio echo server as bridge, `tests/e2e/http_test.py` with a Python Streamable HTTP server). Both projects publish with `TreatWarningsAsErrors` and zero IL/AOT warnings.
 
 ## Layout
@@ -232,5 +236,7 @@ brand/               icon, mark, wordmark
 ## Status
 
 CI runs the unit tests, the warning-free Native AOT publish and the e2e suites on macOS, Ubuntu and Windows (the
-control-socket suite skips Windows, where CPython has no AF_UNIX). The desktop app is used on macOS only.
+control-socket suite skips Windows, where CPython has no AF_UNIX). The desktop app is used on macOS only:
+on Windows the hub cannot tell which program is on the other end of the control socket, so without `--control-trust-all`
+it accepts no approval and Safe mode can block but not ask.
 Version 1.4.0. MIT license.

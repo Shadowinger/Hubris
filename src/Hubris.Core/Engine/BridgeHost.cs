@@ -26,14 +26,23 @@ public sealed class BridgeHost
         catch (Exception ex) when (ex is UriFormatException or ArgumentException)
         {
             Log.Warn($"bridge '{spec.Name}' skipped: {ex.Message}");
+            _rt.BridgeFailures[spec.Name] = ex.Message;
             return null;
         }
 
-        var cachedTools = _rt.ToolCache?.TryGet(spec.Name, bridge.ConfigHash);
+        List<ToolDefinition>? cachedTools = null;
+        BridgeExtras? cachedExtras = null;
+        try
+        {
+            cachedTools = _rt.ToolCache?.TryGet(spec.Name, bridge.ConfigHash);
+            if (cachedTools is not null) cachedExtras = _rt.ToolCache?.TryGetExtras(spec.Name, bridge.ConfigHash);
+        }
+        catch (Exception ex) { Log.Warn($"tool cache read for '{spec.Name}' failed ({ex.Message}); starting the bridge instead"); } // a busy or damaged cache must not cost the bridge
+        _rt.BridgeFailures.TryRemove(spec.Name, out _);
         if (cachedTools is not null)
         {
             foreach (var def in cachedTools) _registry.Register(new BridgedTool(bridge, def));
-            if (_rt.ToolCache?.TryGetExtras(spec.Name, bridge.ConfigHash) is { } cachedExtras) _rt.Extras[spec.Name] = cachedExtras;
+            if (cachedExtras is not null) _rt.Extras[spec.Name] = cachedExtras;
             _rt.Bridges.Enqueue(bridge);
             Log.Info($"bridge '{spec.Name}' exposes {cachedTools.Count} tool(s) from cache; {(spec.IsRemote ? "not connected yet" : "process not started")}");
             return bridge;
@@ -60,6 +69,7 @@ public sealed class BridgeHost
         catch (Exception ex)
         {
             Log.Warn($"bridge '{spec.Name}' failed to start: {ex.Message}");
+            _rt.BridgeFailures[spec.Name] = ex.Message;
             await bridge.DisposeAsync().ConfigureAwait(false);
             return null;
         }
@@ -79,7 +89,8 @@ public sealed class BridgeHost
         string fresh = JsonSerializer.Serialize(extras, McpJsonContext.Default.BridgeExtras);
         string before = rt.Extras.TryGetValue(bridge.Name, out var old) ? JsonSerializer.Serialize(old, McpJsonContext.Default.BridgeExtras) : "";
         rt.Extras[bridge.Name] = extras;
-        rt.ToolCache?.PutExtras(bridge.Name, bridge.ConfigHash, extras);
+        try { rt.ToolCache?.PutExtras(bridge.Name, bridge.ConfigHash, extras); }
+        catch (Exception ex) { Log.Warn($"tool cache write for '{bridge.Name}' failed: {ex.Message}"); } // the bridge works without its cache entry
         if (!extras.IsEmpty) Log.Info($"bridge '{bridge.Name}' offers {extras.Resources.Count} resource(s), {extras.ResourceTemplates.Count} template(s), {extras.Prompts.Count} prompt(s)");
         return !string.Equals(fresh, before, StringComparison.Ordinal);
     }
@@ -89,13 +100,14 @@ public sealed class BridgeHost
         if (rt.ToolCache is not { } cache) return;
         int tokens = 0;
         foreach (var def in tools) tokens += ToolRegistry.EstimateTokens(new BridgedTool(bridge, def));
-        cache.Put(bridge.Name, bridge.ConfigHash, tools, tokens);
+        try { cache.Put(bridge.Name, bridge.ConfigHash, tools, tokens); }
+        catch (Exception ex) { Log.Warn($"tool cache write for '{bridge.Name}' failed: {ex.Message}"); }
     }
 
     /// <summary>Bridges from ~/.hubris/config.json that this hub does not run yet (by name), and names whose launch changed.</summary>
     public (List<BridgeSpec> New, List<string> Stale) DiffConfig()
     {
-        var specs = HubrisConfigFile.ToSpecs(HubrisConfigFile.Load());
+        var specs = HubrisConfigFile.ToSpecs(HubrisConfigFile.Load(), _rt.BridgeFailures);
         var running = _rt.Bridges.ToArray();
         var fresh = new List<BridgeSpec>();
         var stale = new List<string>();

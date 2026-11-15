@@ -14,6 +14,11 @@ namespace Hubris.Auth;
 public sealed class OAuthTokenProvider
 {
     public const int RefreshWindowSec = 60;
+    public const int MissRecheckSec = 5;
+    private long _missAt;
+
+    /// <summary>The store may have changed (a sign-in on another hub was announced): look again on the next call.</summary>
+    public void RecheckStore() => _missAt = 0;
 
     private readonly OAuthSpec _spec;
     private readonly string? _resourceUrl;
@@ -67,7 +72,14 @@ public sealed class OAuthTokenProvider
         await _gate.Lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var tok = _store.Get(Provider) ?? _store.Reload(Provider); // null in memory: another hub may have signed in since
+            var tok = _store.Get(Provider);
+            if (tok is null && _clock().ToUnixTimeSeconds() - _missAt >= MissRecheckSec)
+            {
+                // Null in memory: another hub may have signed in since. Not on every request though: a server that
+                // needs no sign-in would pay a Keychain call each time.
+                _missAt = _clock().ToUnixTimeSeconds();
+                tok = _store.Reload(Provider);
+            }
             if (tok is null) { SetState("none"); return null; }
             bool fresh = Fresh(tok);
             if (fresh && !forceRefresh) { SetState("connected"); return tok.AccessToken; }

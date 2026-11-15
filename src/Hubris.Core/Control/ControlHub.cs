@@ -230,6 +230,7 @@ public sealed class ControlHub : IAsyncDisposable
         m.ActiveTokens = ctx.ActiveTokens;
         m.TotalTokens = ctx.TotalTokens;
         m.Decisions = DecisionList();
+        if (!_rt.BridgeFailures.IsEmpty) m.BridgesFailed = new Dictionary<string, string>(_rt.BridgeFailures);
         if (_rt.Auth is { Count: > 0 } auth) m.Auth = auth.Infos();
     }
 
@@ -253,7 +254,7 @@ public sealed class ControlHub : IAsyncDisposable
     /// <summary>Commands that change what the hub does. Only the desktop app may send them (or anyone with --control-trust-all).</summary>
     private static readonly HashSet<string> Privileged = new(StringComparer.Ordinal)
     {
-        ControlTypes.SetMode, ControlTypes.Approve, ControlTypes.Reveal, ControlTypes.Lock, ControlTypes.Forget,
+        ControlTypes.SetMode, ControlTypes.Approve, ControlTypes.Deny, ControlTypes.Reveal, ControlTypes.Lock, ControlTypes.Forget,
         ControlTypes.ClearCache, ControlTypes.ReloadConfig, ControlTypes.Shutdown,
         ControlTypes.OAuthStart, ControlTypes.OAuthRevoke,
     };
@@ -301,10 +302,6 @@ public sealed class ControlHub : IAsyncDisposable
 
                 case ControlTypes.ListTools:
                     await client.SendAsync(new ControlMessage { Type = ControlTypes.ToolsChanged, Timestamp = DateTime.UtcNow.ToString("O"), Tools = ToolInfos(), ReqId = cmd.ReqId }).ConfigureAwait(false);
-                    return;
-
-                case ControlTypes.ListDecisions:
-                    await client.SendAsync(new ControlMessage { Type = ControlTypes.Status, Timestamp = DateTime.UtcNow.ToString("O"), Decisions = DecisionList(), ReqId = cmd.ReqId }).ConfigureAwait(false);
                     return;
 
                 case ControlTypes.SetMode:
@@ -440,6 +437,7 @@ public sealed class ControlHub : IAsyncDisposable
     private async Task RefreshBridgeAsync(McpBridge bridge)
     {
         _rt.ToolCache?.Invalidate(bridge.Name);
+        if (_rt.Auth is { } auth && auth.TryGet(bridge.Name, out var provider)) provider.RecheckStore(); // this is what the desktop sends after a sign-in elsewhere
         if (bridge.IsStarted && !bridge.IsAlive && !bridge.CanRestart)
         {
             Log.Warn($"bridge '{bridge.Name}' has exited; restart the hub to bring it back");
