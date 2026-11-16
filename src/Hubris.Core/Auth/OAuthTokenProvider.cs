@@ -192,7 +192,7 @@ public sealed class OAuthTokenProvider
 
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
             deadline.CancelAfter(TimeSpan.FromMinutes(5));
-            var query = await listener.WaitForCallbackAsync(state, deadline.Token).ConfigureAwait(false);
+            var query = await listener.WaitForCallbackAsync(state, deadline.Token, Bridge).ConfigureAwait(false);
             if (query.TryGetValue("error", out var error)) throw new OAuthException($"authorization refused: {error} {query.GetValueOrDefault("error_description")}".TrimEnd());
             if (!query.TryGetValue("code", out var code) || code.Length == 0) throw new OAuthException("redirect carried no authorization code");
 

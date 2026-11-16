@@ -140,8 +140,10 @@ public static class OAuthPkceFlow
         /// Waits for the GET /callback that carries <paramref name="state"/> and answers it with a page that closes itself.
         /// Anything else that reaches the port (a favicon probe, another page guessing the address) is turned away and the wait goes on.
         /// </summary>
-        public async Task<Dictionary<string, string>> WaitForCallbackAsync(string state, CancellationToken ct)
+        /// <param name="server">The bridge being signed in to, named on the page so that several sign-in tabs can be told apart.</param>
+        public async Task<Dictionary<string, string>> WaitForCallbackAsync(string state, CancellationToken ct, string? server = null)
         {
+            string? who = server is null ? null : WebUtility.HtmlEncode(server);
             while (true)
             {
                 using var client = await _listener.AcceptTcpClientAsync(ct).ConfigureAwait(false);
@@ -157,18 +159,18 @@ public static class OAuthPkceFlow
                     string target = sp1 < 0 || sp2 < 0 ? "/" : head[(sp1 + 1)..sp2];
                     if (!target.StartsWith("/callback", StringComparison.Ordinal))
                     {
-                        await WriteAsync(stream, "404 Not Found", Page(false, "Nothing here", "This address only receives the sign-in redirect."), one.Token).ConfigureAwait(false);
+                        await WriteAsync(stream, "404 Not Found", Page(false, "Nothing here", "This address only receives the redirect that ends a sign-in.", "Nothing was changed."), one.Token).ConfigureAwait(false);
                         continue; // a browser's favicon probe must not consume the callback
                     }
                     var query = ParseQuery(target);
                     if (query.GetValueOrDefault("state") != state)
                     {
-                        await WriteAsync(stream, "400 Bad Request", Page(false, "Not this sign-in", "This is not the sign-in Hubris is waiting for."), one.Token).ConfigureAwait(false);
+                        await WriteAsync(stream, "400 Bad Request", Page(false, "Not this sign-in", "This is not the sign-in Hubris is waiting for.", "Press Connect in the Hubris app to start again."), one.Token).ConfigureAwait(false);
                         continue;
                     }
                     string html = query.ContainsKey("error")
-                        ? Page(false, "Sign-in failed", WebUtility.HtmlEncode(query.GetValueOrDefault("error_description") is { Length: > 0 } why ? why : query["error"]))
-                        : Page(true, "Hubris is connected", "You can close this tab and go back to your client.");
+                        ? Page(false, who is null ? "Sign-in failed" : $"Sign-in to {who} failed", WebUtility.HtmlEncode(query.GetValueOrDefault("error_description") is { Length: > 0 } why ? why : query["error"]), "Press Connect in the Hubris app to try again.")
+                        : Page(true, who is null ? "Signed in" : $"Connected to {who}", "You can close this tab. Hubris is loading its tools for your agent.", "The token is stored on this machine only.");
                     try { await WriteAsync(stream, "200 OK", html, one.Token).ConfigureAwait(false); }
                     catch (Exception ex) when (ex is IOException or SocketException || (ex is OperationCanceledException && !ct.IsCancellationRequested)) { } // the code is in hand; the page is a courtesy
                     return query;
@@ -195,31 +197,41 @@ public static class OAuthPkceFlow
         }
 
         /// <summary>
-        /// The page the browser lands on, in the desktop app's look (its colours, its square status tag, the mark).
-        /// Self-contained: no font, image or script comes from the network. <paramref name="detail"/> is HTML and must arrive encoded.
+        /// The page the browser lands on, in the look of the desktop app and the website: the mark, whose right half
+        /// docks when the sign-in worked and stays away when it did not, one heading, one sentence, and a foot line with the
+        /// app's status tag and the next step. Self-contained: no font, image or script comes from the network.
+        /// All three texts are HTML and must arrive encoded.
         /// </summary>
-        public static string Page(bool ok, string title, string detail) => $$"""
+        public static string Page(bool ok, string title, string detail, string note) => $$"""
             <!doctype html>
             <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark">
-            <title>Hubris</title>
+            <title>{{title}} · Hubris</title>
+            <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1024 1024'%3E%3Crect width='1024' height='1024' rx='236' fill='%2315171c'/%3E%3Cpath fill='%23f7f8f8' d='M498 300A262 262 0 0 0 498 824ZM526 200A262 262 0 0 1 526 724Z'/%3E%3C/svg%3E">
             <style>
             *{box-sizing:border-box}
-            body{margin:0;min-height:100vh;padding:0 16px 12vh;display:grid;place-items:center;background:#08090A;color:#F7F8F8;font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
-            main{width:min(400px,100%);padding:18px 24px 26px;background:#0F1011;border:1px solid #1C1D1F;border-radius:10px}
-            .top{display:flex;align-items:center;justify-content:space-between}
-            .brand{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;color:#7B8089}
-            .brand svg{width:14px;height:16px;fill:#F7F8F8}
-            .tag{display:inline-flex;align-items:center;gap:6px;height:20px;padding:0 7px;border:1px solid;border-radius:3px;font-size:12px}
+            ::selection{background:rgba(113,112,255,.4);color:#fff}
+            html{background:#08090a;color-scheme:dark}
+            body{margin:0;min-height:100vh;min-height:100dvh;display:grid;place-items:center;padding:24px 24px 14vh;color:#f7f8f8;font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+            main{width:min(440px,100%)}
+            .mark{display:block;width:35px;height:40px;fill:#f7f8f8;overflow:visible}
+            .apart .r{transform:translateX(170px)}
+            h1{margin:28px 0 8px;font-size:28px;line-height:1.2;font-weight:600;letter-spacing:-.022em;text-wrap:balance;overflow-wrap:anywhere}
+            p{margin:0;color:#8a8f98;text-wrap:pretty;overflow-wrap:anywhere}
+            .foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-top:28px;padding-top:16px;border-top:1px solid rgba(255,255,255,.08);font-size:13px;color:#8a8f98}
+            .tag{flex:none;display:inline-flex;align-items:center;gap:6px;height:20px;padding:0 7px;border:1px solid;border-radius:3px;font-size:12px;line-height:1}
             .tag i{width:6px;height:6px;border-radius:50%;background:currentColor}
-            .ok{color:#4CC38A;border-color:#4CC38A59}
-            .stop{color:#EF6B6B;border-color:#EF6B6B59}
-            h1{margin:30px 0 6px;font-size:20px;line-height:1.3;font-weight:600;letter-spacing:-.01em}
-            p{margin:0;color:#8A8F98;overflow-wrap:anywhere}
+            .ok{color:#4cc38a;border-color:rgba(76,195,138,.35)}
+            .stop{color:#ef6b6b;border-color:rgba(239,107,107,.35)}
+            @media (prefers-reduced-motion:no-preference){
+            .join .r{animation:dock .7s cubic-bezier(.16,1,.3,1) .2s backwards}
+            @keyframes dock{from{transform:translateX(170px)} }
+            }
             </style></head>
             <body><main>
-            <div class="top"><span class="brand"><svg viewBox="236 200 552 624" aria-hidden="true"><path d="M498 300A262 262 0 0 0 498 824Z"/><path d="M526 200A262 262 0 0 1 526 724Z"/></svg>Hubris</span><span class="tag {{(ok ? "ok" : "stop")}}"><i></i>{{(ok ? "connected" : "not connected")}}</span></div>
+            <svg class="mark {{(ok ? "join" : "apart")}}" viewBox="236 200 552 624" aria-hidden="true"><path d="M498 300A262 262 0 0 0 498 824Z"/><path class="r" d="M526 200A262 262 0 0 1 526 724Z"/></svg>
             <h1>{{title}}</h1>
             <p>{{detail}}</p>
+            <div class="foot"><span class="tag {{(ok ? "ok" : "stop")}}"><i></i>{{(ok ? "connected" : "not connected")}}</span><span>{{note}}</span></div>
             </main>{{(ok ? "<script>window.close()</script>" : "")}}</body></html>
             """;
 

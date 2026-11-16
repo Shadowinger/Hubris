@@ -386,9 +386,14 @@ public class AuthTests : IDisposable
     [Fact]
     public void Sign_in_page_is_self_contained_and_shows_its_state()
     {
-        string ok = OAuthPkceFlow.LoopbackListener.Page(true, "Hubris is connected", "x");
-        string bad = OAuthPkceFlow.LoopbackListener.Page(false, "Sign-in failed", "x");
-        Assert.DoesNotContain("http", ok);              // no font, image or script from the network
+        string ok = OAuthPkceFlow.LoopbackListener.Page(true, "Connected to notion", "x", "y");
+        string bad = OAuthPkceFlow.LoopbackListener.Page(false, "Sign-in to notion failed", "x", "y");
+        Assert.DoesNotContain("https://", ok);          // no font, image or script from the network: the one "http" is the icon's SVG namespace
+        Assert.DoesNotContain("src=", ok);
+        Assert.DoesNotContain("@import", ok);
+        Assert.Contains("<title>Connected to notion · Hubris</title>", ok); // the tab says which server
+        Assert.Contains("class=\"mark join\"", ok);
+        Assert.Contains("class=\"mark apart\"", bad);
         Assert.Contains("class=\"tag ok\"", ok);
         Assert.Contains("window.close()", ok);
         Assert.Contains("class=\"tag stop\"", bad);
