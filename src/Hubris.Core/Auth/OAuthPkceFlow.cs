@@ -157,18 +157,18 @@ public static class OAuthPkceFlow
                     string target = sp1 < 0 || sp2 < 0 ? "/" : head[(sp1 + 1)..sp2];
                     if (!target.StartsWith("/callback", StringComparison.Ordinal))
                     {
-                        await WriteAsync(stream, "404 Not Found", "<p>Not here.</p>", one.Token).ConfigureAwait(false);
+                        await WriteAsync(stream, "404 Not Found", Page(false, "Nothing here", "This address only receives the sign-in redirect."), one.Token).ConfigureAwait(false);
                         continue; // a browser's favicon probe must not consume the callback
                     }
                     var query = ParseQuery(target);
                     if (query.GetValueOrDefault("state") != state)
                     {
-                        await WriteAsync(stream, "400 Bad Request", "<p>This is not the sign-in Hubris is waiting for.</p>", one.Token).ConfigureAwait(false);
+                        await WriteAsync(stream, "400 Bad Request", Page(false, "Not this sign-in", "This is not the sign-in Hubris is waiting for."), one.Token).ConfigureAwait(false);
                         continue;
                     }
                     string html = query.ContainsKey("error")
-                        ? $"<h2>Hubris: sign-in failed</h2><p>{WebUtility.HtmlEncode(query.GetValueOrDefault("error_description") ?? query["error"])}</p>"
-                        : "<h2>Hubris is connected</h2><p>You can close this tab.</p><script>window.close()</script>";
+                        ? Page(false, "Sign-in failed", WebUtility.HtmlEncode(query.GetValueOrDefault("error_description") is { Length: > 0 } why ? why : query["error"]))
+                        : Page(true, "Hubris is connected", "You can close this tab and go back to your client.");
                     try { await WriteAsync(stream, "200 OK", html, one.Token).ConfigureAwait(false); }
                     catch (Exception ex) when (ex is IOException or SocketException || (ex is OperationCanceledException && !ct.IsCancellationRequested)) { } // the code is in hand; the page is a courtesy
                     return query;
@@ -194,9 +194,38 @@ public static class OAuthPkceFlow
             return Encoding.ASCII.GetString(buf, 0, n);
         }
 
+        /// <summary>
+        /// The page the browser lands on, in the desktop app's look (its colours, its square status tag, the mark).
+        /// Self-contained: no font, image or script comes from the network. <paramref name="detail"/> is HTML and must arrive encoded.
+        /// </summary>
+        public static string Page(bool ok, string title, string detail) => $$"""
+            <!doctype html>
+            <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark">
+            <title>Hubris</title>
+            <style>
+            *{box-sizing:border-box}
+            body{margin:0;min-height:100vh;padding:0 16px 12vh;display:grid;place-items:center;background:#08090A;color:#F7F8F8;font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+            main{width:min(400px,100%);padding:18px 24px 26px;background:#0F1011;border:1px solid #1C1D1F;border-radius:10px}
+            .top{display:flex;align-items:center;justify-content:space-between}
+            .brand{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;color:#7B8089}
+            .brand svg{width:14px;height:16px;fill:#F7F8F8}
+            .tag{display:inline-flex;align-items:center;gap:6px;height:20px;padding:0 7px;border:1px solid;border-radius:3px;font-size:12px}
+            .tag i{width:6px;height:6px;border-radius:50%;background:currentColor}
+            .ok{color:#4CC38A;border-color:#4CC38A59}
+            .stop{color:#EF6B6B;border-color:#EF6B6B59}
+            h1{margin:30px 0 6px;font-size:20px;line-height:1.3;font-weight:600;letter-spacing:-.01em}
+            p{margin:0;color:#8A8F98;overflow-wrap:anywhere}
+            </style></head>
+            <body><main>
+            <div class="top"><span class="brand"><svg viewBox="236 200 552 624" aria-hidden="true"><path d="M498 300A262 262 0 0 0 498 824Z"/><path d="M526 200A262 262 0 0 1 526 724Z"/></svg>Hubris</span><span class="tag {{(ok ? "ok" : "stop")}}"><i></i>{{(ok ? "connected" : "not connected")}}</span></div>
+            <h1>{{title}}</h1>
+            <p>{{detail}}</p>
+            </main>{{(ok ? "<script>window.close()</script>" : "")}}</body></html>
+            """;
+
         private static async Task WriteAsync(NetworkStream s, string status, string html, CancellationToken ct)
         {
-            byte[] body = Encoding.UTF8.GetBytes("<!doctype html><meta charset=utf-8><title>Hubris</title><body style=\"font-family:system-ui;padding:2em\">" + html);
+            byte[] body = Encoding.UTF8.GetBytes(html);
             byte[] head = Encoding.ASCII.GetBytes($"HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {body.Length}\r\nConnection: close\r\n\r\n");
             await s.WriteAsync(head, ct).ConfigureAwait(false);
             await s.WriteAsync(body, ct).ConfigureAwait(false);

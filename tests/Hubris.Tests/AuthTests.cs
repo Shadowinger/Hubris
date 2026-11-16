@@ -384,6 +384,18 @@ public class AuthTests : IDisposable
     }
 
     [Fact]
+    public void Sign_in_page_is_self_contained_and_shows_its_state()
+    {
+        string ok = OAuthPkceFlow.LoopbackListener.Page(true, "Hubris is connected", "x");
+        string bad = OAuthPkceFlow.LoopbackListener.Page(false, "Sign-in failed", "x");
+        Assert.DoesNotContain("http", ok);              // no font, image or script from the network
+        Assert.Contains("class=\"tag ok\"", ok);
+        Assert.Contains("window.close()", ok);
+        Assert.Contains("class=\"tag stop\"", bad);
+        Assert.DoesNotContain("window.close()", bad);   // a failure has to stay on screen
+    }
+
+    [Fact]
     public async Task Callback_listener_outlives_a_connection_that_says_nothing_useful()
     {
         using var listener = new OAuthPkceFlow.LoopbackListener();
