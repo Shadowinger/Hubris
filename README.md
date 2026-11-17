@@ -271,4 +271,4 @@ CI runs the unit tests, the warning-free Native AOT publish and the e2e suites o
 control-socket suite skips Windows, where CPython has no AF_UNIX). The desktop app is used on macOS only:
 on Windows the hub cannot tell which program is on the other end of the control socket, so without `--control-trust-all`
 it accepts no approval and Safe mode can block but not ask.
-Version 1.4.0. MIT license.
+Version 1.4.1. MIT license.

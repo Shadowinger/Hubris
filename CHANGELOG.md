@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.1
+
+**Desktop app**
+
+- A long client or tool name no longer runs under the mode switch or out of the approval card: it is cut with an
+  ellipsis and its tags stay beside it.
+- Known clients are shown by a readable name (Claude Desktop, Claude Code, Claude Desktop · agent for the app's
+  agent-mode proxy); the name the client gave is in the tooltip.
+
+The hub itself is unchanged.
+
 ## 1.4.0
 
 The first tagged release.
