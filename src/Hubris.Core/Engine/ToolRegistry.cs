@@ -33,6 +33,8 @@ public sealed class HubRuntime
     public McpBridge? Bridge(string name) { foreach (var b in Bridges) if (b.Name == name) return b; return null; }
     public int BridgeCount => Bridges.Count;
     public int BridgesRunning { get { int n = 0; foreach (var b in Bridges) if (b.IsAlive) n++; return n; } }
+    /// <summary>Set by a host that is not the public binary ("Enterprise"); shown by --version and hub_status so the two can be told apart.</summary>
+    public static string Edition { get; set; } = string.Empty;
     /// <summary>From Directory.Build.props, the number the bundle's Info.plist is written from too.</summary>
     public static readonly string Version = typeof(HubRuntime).Assembly.GetName().Version!.ToString(3);
 }

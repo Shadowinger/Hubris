@@ -225,7 +225,7 @@ stdio echo server as bridge, `tests/e2e/http_test.py` with a Python Streamable H
 
 ```
 src/Hubris.Core      protocol, transport, security, DLP, tool cache, engine, control channel, client config scan
-src/Hubris           the server
+src/Hubris           the server: one line that calls HubHost.RunAsync in the core, so another host can build an edition on it
 src/Hubris.Desktop   Avalonia 12 app
 tests/Hubris.Tests   xUnit
 tests/e2e            python e2e

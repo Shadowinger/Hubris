@@ -106,6 +106,7 @@ public sealed class HubStatusTool : IMcpTool
         sb.Append(" dlp_redactions=").Append(DlpSanitizer.RedactionCount);
         sb.Append(" pid=").Append(Environment.ProcessId);
         sb.Append(" version=").Append(HubRuntime.Version);
+        if (HubRuntime.Edition.Length > 0) sb.Append(" edition=").Append(HubRuntime.Edition);
         return ValueTask.FromResult(CallToolResult.Text(sb.ToString()));
     }
 }
