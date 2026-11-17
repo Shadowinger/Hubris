@@ -11,7 +11,7 @@ before letting them through.
 .NET 10, Native AOT, no reflection, no runtime to install. A desktop app (Avalonia) does configuration,
 takeover of existing client configs, live call view and approvals.
 
-![Hubris desktop app: a call waiting for approval, the context cost and the live call log with its inspector](docs/hubris-dashboard.png)
+![Hubris desktop app: 11 of 368 tools in the model's context, one blocked call, the sign-in state of each server and the live call log with its inspector](docs/hubris-dashboard.png)
 
 **Get it:** download the app or the hub from the [releases page](https://github.com/Shadowinger/Hubris/releases)
 and follow [Install](#install), or build it from source. **No telemetry:** Hubris talks only to the MCP servers you
