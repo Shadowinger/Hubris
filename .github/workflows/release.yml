@@ -1,0 +1,84 @@
+name: release
+
+# A tag vX.Y.Z builds the archives on three systems and publishes them as a GitHub release with SHA256SUMS
+# and the notes for that version from CHANGELOG.md.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: macos-latest      # Apple Silicon
+            name: macos-arm64
+          - os: ubuntu-latest
+            name: linux-x64
+          - os: windows-latest
+            name: windows-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: The tag must be the version in Directory.Build.props
+        shell: bash
+        run: |
+          version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' Directory.Build.props | head -1)
+          [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME does not match Directory.Build.props ($version)"; exit 1; }
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Package for macOS (the app with the hub inside)
+        if: runner.os == 'macOS'
+        run: |
+          build/bundle-macos.sh
+          ditto -c -k --keepParent artifacts/Hubris.app "Hubris-$VERSION-${{ matrix.name }}.zip"
+
+      - name: Package for Linux (the hub)
+        if: runner.os == 'Linux'
+        run: |
+          dotnet publish src/Hubris -c Release --nologo
+          out=$(dirname "$(find src/Hubris/bin/Release -type f -name Hubris -path '*publish*' | head -1)")
+          mkdir pkg && cp "$out/Hubris" "$out"/*.so LICENSE README.md pkg/
+          tar -czf "Hubris-$VERSION-${{ matrix.name }}.tar.gz" -C pkg .
+
+      - name: Package for Windows (the hub)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          dotnet publish src/Hubris -c Release --nologo
+          out=$(dirname "$(find src/Hubris/bin/Release -type f -name Hubris.exe -path '*publish*' | head -1)")
+          mkdir pkg && cp "$out/Hubris.exe" "$out"/*.dll LICENSE README.md pkg/
+          (cd pkg && 7z a "../Hubris-$VERSION-${{ matrix.name }}.zip" . > /dev/null)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: Hubris-*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums, notes, release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          (cd dist && sha256sum Hubris-* > SHA256SUMS && cat SHA256SUMS)
+          version=${GITHUB_REF_NAME#v}
+          awk -v v="## $version" '/^## / { on = index($0, v) == 1; next } on' CHANGELOG.md > notes.md
+          [ -s notes.md ] || { echo "CHANGELOG.md has no section for $version"; exit 1; }
+          gh release create "$GITHUB_REF_NAME" dist/* --title "Hubris $version" --notes-file notes.md

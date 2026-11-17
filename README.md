@@ -13,6 +13,10 @@ takeover of existing client configs, live call view and approvals.
 
 ![Hubris desktop app: a call waiting for approval, the context cost and the live call log with its inspector](docs/hubris-dashboard.png)
 
+**Get it:** download the app or the hub from the [releases page](https://github.com/Shadowinger/Hubris/releases)
+and follow [Install](#install), or build it from source. **No telemetry:** Hubris talks only to the MCP servers you
+configured, to their sign-in servers and, when you search in the desktop app, to the public MCP registry.
+
 ## Numbers
 
 Measured on an M-series Mac with the 4 bridges from my own `~/.hubris/config.json`
@@ -118,6 +122,34 @@ client ──stdio──▶ Hubris ──stdio──▶ bridge 1 (npx …)
 
 ## Install
 
+### Download
+
+Each [release](https://github.com/Shadowinger/Hubris/releases) carries three archives and `SHA256SUMS`:
+
+| File | What is in it |
+|---|---|
+| `Hubris-<version>-macos-arm64.zip` | `Hubris.app` for Apple Silicon: the desktop app with the hub inside |
+| `Hubris-<version>-linux-x64.tar.gz` | the hub |
+| `Hubris-<version>-windows-x64.zip` | the hub |
+
+**macOS.** Unzip, move `Hubris.app` to `/Applications`, then clear the download mark. The app is not signed with an
+Apple developer certificate, so without this step macOS refuses to open it:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Hubris.app
+```
+
+Open the app, go to the configurator, press Scan and then Import & hijack for each client (quit the client first).
+The hub itself is `/Applications/Hubris.app/Contents/MacOS/Hubris`. Keep the app and the hub in that one folder: the
+hub takes approvals only from the desktop app next to it.
+
+**Linux and Windows.** Unpack the archive anywhere and register the hub with a client as shown below. There is no
+desktop app in these archives, and on Windows the hub cannot take approvals (see [Status](#status)).
+
+To check a download: `shasum -a 256 -c SHA256SUMS` in the folder with the files.
+
+### Build from source
+
 Requirements: .NET SDK 10. On macOS the Xcode command line tools (for the linker).
 
 ```bash
@@ -125,7 +157,7 @@ dotnet publish src/Hubris -c Release
 # -> src/Hubris/bin/Release/net10.0/<rid>/publish/Hubris
 ```
 
-Register it with a client:
+### Register it with a client
 
 ```bash
 Hubris --install-claude --compact        # Claude Desktop (writes claude_desktop_config.json, keeps a .bak)
