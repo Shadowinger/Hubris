@@ -159,6 +159,18 @@ public class DlpTimeLimitTests
     }
 }
 
+public class ClientNameTests
+{
+    [Theory]
+    [InlineData("claude-code 2.1.325", "Claude Code 2.1.325")]
+    [InlineData("claude-ai 0.1.0", "Claude Desktop 0.1.0")]
+    [InlineData("local-agent-mode-hubris 1.0.0", "Claude Desktop · agent")] // the desktop app's proxy, named after the server
+    [InlineData("claude-code", "Claude Code")]
+    [InlineData("cursor-vscode 1.0.0", "cursor-vscode 1.0.0")]              // not known: shown as it calls itself
+    [InlineData("", "")]
+    public void Known_clients_get_a_readable_name(string raw, string label) => Assert.Equal(label, Hubris.Control.ClientNames.Label(raw));
+}
+
 public class ControlTrustTests
 {
     [Theory]

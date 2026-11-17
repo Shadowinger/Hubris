@@ -53,7 +53,7 @@ public sealed class HubViewModel : ObservableObject
     public string Cwd { get; }
     public bool IsCompact { get; }
     public string Version { get; }
-    public string Title => string.IsNullOrEmpty(ClientName) ? $"pid {Pid}" : ClientName;
+    public string Title => string.IsNullOrEmpty(ClientName) ? $"pid {Pid}" : ClientNames.Label(ClientName);
     /// <summary>The hub process predates this desktop build (started before the client was restarted).</summary>
     public bool IsOutdated => !string.Equals(Version, HubRuntime.Version, StringComparison.Ordinal);
     public string OutdatedHint => $"Hub runs Hubris {Version}, this app is {HubRuntime.Version}: restart the MCP client to pick up the new binary.";

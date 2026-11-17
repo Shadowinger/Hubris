@@ -163,6 +163,25 @@ public sealed partial class ControlJsonContext : JsonSerializerContext
 {
 }
 
+/// <summary>What an MCP client calls itself in initialize, turned into a name a person recognises.</summary>
+public static class ClientNames
+{
+    /// <param name="raw">"name version" as the hub reports it, e.g. "claude-code 2.1.325". A name that is not known is returned as it is.</param>
+    public static string Label(string raw)
+    {
+        int space = raw.IndexOf(' ');
+        string name = space < 0 ? raw : raw[..space], version = space < 0 ? string.Empty : raw[space..];
+        // The Claude desktop app reaches its agent sessions' servers through a proxy named after the server; the proxy's own version says nothing.
+        if (name.StartsWith("local-agent-mode-", StringComparison.Ordinal)) return "Claude Desktop · agent";
+        return name switch
+        {
+            "claude-ai" => "Claude Desktop" + version,
+            "claude-code" => "Claude Code" + version,
+            _ => raw,
+        };
+    }
+}
+
 /// <summary>Well-known locations shared by the hub and the desktop UI.</summary>
 public static class HubrisPaths
 {

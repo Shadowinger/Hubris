@@ -51,7 +51,7 @@
                     <ListBox.ItemTemplate>
                         <DataTemplate x:DataType="vm:HubViewModel">
                             <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="8">
-                                <TextBlock Grid.Row="0" Grid.Column="0" Classes="title" Text="{Binding Title}" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Grid.Row="0" Grid.Column="0" Classes="title" Text="{Binding Title}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding ClientName}" />
                                 <TextBlock Grid.Row="1" Grid.Column="0" Classes="mono muted" FontSize="11" Text="{Binding Subtitle}" TextTrimming="CharacterEllipsis" Margin="0,3,0,0" />
                                 <StackPanel Grid.Row="0" Grid.RowSpan="2" Grid.Column="1" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
                                     <Border Classes="pill indigo" IsVisible="{Binding HasApprovals}"><TextBlock Classes="num" Text="{Binding PendingCount}" /></Border>
@@ -90,7 +90,7 @@
                     <DockPanel HorizontalAlignment="Left">
                         <Border DockPanel.Dock="Right" Classes="pill" Margin="8,0,0,0" VerticalAlignment="Center" IsVisible="{Binding IsCompact}"><TextBlock Text="compact" /></Border>
                         <Border DockPanel.Dock="Right" Classes="pill" Margin="8,0,0,0" VerticalAlignment="Center" Classes.ok="{Binding IsSafe}" Classes.indigo="{Binding IsAuto}" Classes.warn="{Binding IsBypass}"><TextBlock Text="{Binding Mode}" /></Border>
-                        <TextBlock Classes="h1" Text="{Binding Title}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Title}" />
+                        <TextBlock Classes="h1" Text="{Binding Title}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding ClientName}" />
                     </DockPanel>
                     <TextBlock Classes="mono muted" FontSize="11" Text="{Binding Cwd}" TextTrimming="CharacterEllipsis" />
                 </StackPanel>
