@@ -181,41 +181,53 @@ public sealed class CliOptions
                 }
                 else spec = a[9..];
 
-                int colon = spec.IndexOf(':');
-                if (colon <= 0 || colon == spec.Length - 1) { error = $"invalid --bridge spec '{spec}' (expected <name>:<command>)"; return false; }
-                string name = spec[..colon];
-                string command = spec[(colon + 1)..];
-                if (!BridgeSpec.IsValidName(name)) { error = $"bridge name '{name}': {BridgeSpec.NameRule}"; return false; }
-
                 // Child servers take their own --flags; only Hubris's options end the bridge's argument list.
                 var bridgeArgs = new List<string>();
                 while (i + 1 < args.Length && !IsOwnOption(args[i + 1]))
                     bridgeArgs.Add(args[++i]);
 
-                // --bridge=api:https://host/mcp  or  --bridge=api:sse:https://host/sse, followed by "Header: value" pairs
-                string? transport = null;
-                string target = command;
-                if (target.StartsWith("sse:", StringComparison.OrdinalIgnoreCase)) { transport = "sse"; target = target[4..]; }
-                if (target.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || target.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-                {
-                    if (!Uri.TryCreate(target, UriKind.Absolute, out _)) { error = $"invalid bridge url '{target}'"; return false; }
-                    var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                    foreach (var h in bridgeArgs)
-                    {
-                        int sep = h.IndexOf(':');
-                        if (sep <= 0) { error = $"remote bridge '{name}': expected 'Header: value', got '{h}'"; return false; }
-                        headers[h[..sep].Trim()] = h[(sep + 1)..].Trim();
-                    }
-                    options.Bridges.Add(new BridgeSpec(name, string.Empty, [], null, target, headers.Count == 0 ? null : headers, transport ?? "http"));
-                    continue;
-                }
-                options.Bridges.Add(new BridgeSpec(name, command, bridgeArgs));
+                if (!TryParseBridge(spec, bridgeArgs, out var bridge, out error)) return false;
+                options.Bridges.Add(bridge!);
                 continue;
             }
 
             error = $"unknown option '{a}'";
             return false;
         }
+        return true;
+    }
+
+    /// <summary>
+    /// "name:command" with the child's arguments, or "name:https://host/mcp" ("name:sse:https://…" for HTTP+SSE) with
+    /// "Header: value" pairs. Shared by --bridge and the bridge add command.
+    /// </summary>
+    public static bool TryParseBridge(string spec, IReadOnlyList<string> bridgeArgs, out BridgeSpec? bridge, out string? error)
+    {
+        bridge = null;
+        error = null;
+        int colon = spec.IndexOf(':');
+        if (colon <= 0 || colon == spec.Length - 1) { error = $"invalid --bridge spec '{spec}' (expected <name>:<command>)"; return false; }
+        string name = spec[..colon];
+        string command = spec[(colon + 1)..];
+        if (!BridgeSpec.IsValidName(name)) { error = $"bridge name '{name}': {BridgeSpec.NameRule}"; return false; }
+
+        string? transport = null;
+        string target = command;
+        if (target.StartsWith("sse:", StringComparison.OrdinalIgnoreCase)) { transport = "sse"; target = target[4..]; }
+        if (target.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || target.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!Uri.TryCreate(target, UriKind.Absolute, out _)) { error = $"invalid bridge url '{target}'"; return false; }
+            var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var h in bridgeArgs)
+            {
+                int sep = h.IndexOf(':');
+                if (sep <= 0) { error = $"remote bridge '{name}': expected 'Header: value', got '{h}'"; return false; }
+                headers[h[..sep].Trim()] = h[(sep + 1)..].Trim();
+            }
+            bridge = new BridgeSpec(name, string.Empty, [], null, target, headers.Count == 0 ? null : headers, transport ?? "http");
+            return true;
+        }
+        bridge = new BridgeSpec(name, command, bridgeArgs);
         return true;
     }
 
@@ -241,6 +253,8 @@ public sealed class CliOptions
             "              [--bridge=<name>:<command> [arg ...]]...\n" +
             "       Hubris --install-vscode [server flags]\n" +
             "       Hubris --install-claude [server flags]\n" +
+            "       Hubris status | tools [text] | watch | mode <safe|auto|bypass> | approve <id> | deny <id>   [--pid=N]\n" +
+            "       Hubris bridge list | add <name> <command|url> [arg ...] | remove <name>\n" +
             "\n" +
             "  --stdio            serve MCP over stdin/stdout (default)\n" +
             "  --mode=safe        block destructive tools and dangerous arguments (default)\n" +
@@ -258,6 +272,17 @@ public sealed class CliOptions
             "  --auto-lock=S      hide an unlocked tool again after S seconds without a call (default 600, 0 = never)\n" +
             "  --install-vscode   write .vscode/mcp.json in the current directory\n" +
             "  --install-claude   register in Claude Desktop's claude_desktop_config.json\n" +
-            "  --version, --help\n");
+            "  --version, --help\n" +
+            "\n" +
+            "commands (they talk to the hubs that are running, or edit ~/.hubris/config.json):\n" +
+            "  status             every running hub: client, mode, context cost, blocked calls, bridges, sign-ins, waiting approvals\n" +
+            "  tools [text]       the tools of a hub and what each costs in tokens; text filters by name\n" +
+            "  watch              calls, approval requests and mode changes as they happen, until Ctrl+C\n" +
+            "  mode <m>           switch the mode of the running hubs\n" +
+            "  approve|deny <id>  decide a waiting call; the id is in status and watch\n" +
+            "  bridge list|add|remove   the servers in config.json; a hub reads them when it starts\n" +
+            "  --pid=N            one hub instead of all of them\n" +
+            "  mode, approve and deny are refused unless the hub runs with --control-trust-all: a shell tool the model drives\n" +
+            "  can run this binary too, so by default only the desktop app may change what a hub does.\n");
     }
 }

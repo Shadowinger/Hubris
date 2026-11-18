@@ -26,6 +26,8 @@ public static class HubHost
         AppDomain.CurrentDomain.UnhandledException += static (_, e) => Log.Error($"unhandled: {e.ExceptionObject}");
         TaskScheduler.UnobservedTaskException += static (_, e) => { Log.Error($"unobserved: {e.Exception.Message}"); e.SetObserved(); };
 
+        if (HubCli.IsCommand(args)) return await HubCli.RunAsync(args, Console.Out);
+
         if (!CliOptions.TryParse(args, out var opts, out string? parseError))
         {
             Log.Error(parseError ?? "invalid arguments");

@@ -19,6 +19,37 @@ public class ConfigTests : IDisposable
     }
 
     [Fact]
+    public async Task Bridge_commands_edit_the_config_file()
+    {
+        var o = new StringWriter();
+        Task<int> Run(params string[] args) => Hubris.Cli.HubCli.RunAsync(args, o);
+
+        // "--pid=7" and "--verbose" are the child's own arguments here, not options of the command
+        Assert.Equal(0, await Run("bridge", "add", "fs", "npx", "-y", "srv", "--verbose", "--pid=7", "two words"));
+        Assert.Equal(0, await Run("bridge", "add", "web", "sse:https://example.com/sse", "X-Key: ${KEY}"));
+        Assert.Equal(1, await Run("bridge", "add", "fs", "other"));            // the name is taken
+        Assert.Equal(1, await Run("bridge", "add", "a__b", "cmd"));            // not a usable name
+        Assert.Equal(1, await Run("bridge", "add", "a:b", "cmd"));
+        Assert.Equal(1, await Run("bridge", "add", "bad", "https://x", "no header here"));
+        Assert.Equal(2, await Run("bridge", "add", "onlyname"));
+
+        var cfg = HubrisConfigFile.Load();
+        Assert.Equal(["fs", "web"], cfg.Bridges.Select(b => b.Name));
+        Assert.Equal(["-y", "srv", "--verbose", "--pid=7", "two words"], cfg.Bridges[0].Args);
+        Assert.Equal(("https://example.com/sse", "sse", "${KEY}"), (cfg.Bridges[1].Url, cfg.Bridges[1].Transport, cfg.Bridges[1].Headers!["X-Key"]));
+
+        o.GetStringBuilder().Clear();
+        Assert.Equal(0, await Run("bridge", "list"));
+        Assert.Contains("fs   stdio  npx -y srv --verbose --pid=7 \"two words\"", o.ToString());
+        Assert.Contains("web  sse    https://example.com/sse", o.ToString());
+        Assert.DoesNotContain("KEY", o.ToString()); // header values stay in the file
+
+        Assert.Equal(0, await Run("bridge", "remove", "fs"));
+        Assert.Equal(1, await Run("bridge", "remove", "fs"));
+        Assert.Equal(["web"], HubrisConfigFile.Load().Bridges.Select(b => b.Name));
+    }
+
+    [Fact]
     public void Config_file_round_trips_and_keeps_a_backup()
     {
         string path = Path.Combine(_home, "cfg", "config.json");

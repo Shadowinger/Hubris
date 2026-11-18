@@ -28,7 +28,7 @@ Measured on an M-series Mac with the 4 bridges from my own `~/.hubris/config.jso
 | context used after unlocking the tools a task needs | all 52 | 13 of 52, ~1 800 tokens (81 % less, from `hub_status` on a real session) |
 | time until `tools/list` is answered | ~1.8 s (every bridge spawned via `npx`) | 72 ms (definitions served from the SQLite cache, bridges spawned on first call) |
 | MCP server processes after start | 4 (one per server) | 0 (bridges start lazily; 1 of 4 running after a typical session) |
-| server binary | | 9.3 MB, starts in ~50 ms, ~13 MB RSS in steady state |
+| server binary | | 9.5 MB, starts in ~50 ms, ~13 MB RSS in steady state |
 
 The token numbers are bytes/4 estimates. The second row comes from a live session where the model
 searched for and unlocked 10 bridged tools; the rest stayed off the list.
@@ -226,6 +226,47 @@ run from another folder. A same-user attacker who can replace that binary or inj
 that is the limit of a local gateway.
 `HUBRIS_HOME` moves the whole state directory.
 
+## Command line
+
+The same binary answers a few commands when its first argument is one of them. They find the running hubs in
+`~/.hubris/run` and talk to them over the control socket; `bridge` edits `~/.hubris/config.json`.
+
+```
+Hubris status                                      every running hub, see below
+Hubris tools [text]                                the tools of a hub and what each costs in tokens; text filters by name
+Hubris watch                                       calls, approval requests and mode changes as they happen, until Ctrl+C
+Hubris mode safe|auto|bypass                       switch the mode of the running hubs
+Hubris approve <id> | deny <id>                    decide a waiting call; the id is shown by status and watch
+Hubris bridge list
+Hubris bridge add <name> <command> [arg…]          a local server
+Hubris bridge add <name> <url> ["Header: value"…]  a remote one (sse:<url> for the older transport)
+Hubris bridge remove <name>
+```
+
+`--pid=N` after `status`, `tools`, `watch` or `mode` picks one hub instead of all of them.
+
+```
+$ Hubris status
+hub 71054 · Claude Code 2.1.325 · Safe mode · up 7 h 1 min · Hubris 1.4.1
+  folder    /Users/me/project
+  context   11 of 368 tools listed, 5,043 of 180,691 tokens
+  policy    1 blocked, 3 masked
+  bridges   7 configured, 5 running
+  failed    fs: bridge 'fs' exited with code 1
+  sign-in   notion: connected
+  waiting   71054-3  fs__run  [SAFE MODE BLOCKED] Tool='fs__run' Risk=Mutating Matched: rm -rf.
+```
+
+`status`, `tools`, `watch` and `bridge` work with every hub. `mode`, `approve` and `deny` are refused unless the hub
+runs with `--control-trust-all`, for the reason given under Usage: a shell tool the model drives can run this binary
+as well, so a hub that took `Hubris mode bypass` from any process would let the model switch its own guard off. Where
+there is no desktop app (Linux, a server), start the hub with that flag to approve from a terminal, knowing what it
+opens; a `watch` that is running then counts as somebody who can approve, so blocked calls wait for it. A bridge
+added here applies from the next hub start. An OAuth sign-in is started from the desktop app, and `bridge add`
+writes no `auth` block: add a server that needs one in the app or in the file.
+
+On macOS the binary is inside the app: `alias hubris=/Applications/Hubris.app/Contents/MacOS/Hubris`.
+
 ## Desktop app
 
 ```bash
@@ -246,12 +287,13 @@ Skia/HarfBuzz dylibs. Set `CODESIGN_IDENTITY` for a real signature.
 ## Tests
 
 ```bash
-tests/run.sh                        # unit tests, warning-free AOT publish, e2e over stdio + control socket
+tests/run.sh                        # unit tests, warning-free AOT publish, e2e over stdio, control socket and the commands
 dotnet test tests/Hubris.Tests      # unit tests only
 ```
 
-239 xUnit tests and 93 end-to-end checks (`tests/e2e/control_test.py` drives a published binary with a Python
-stdio echo server as bridge, `tests/e2e/http_test.py` with a Python Streamable HTTP server). Both projects publish with `TreatWarningsAsErrors` and zero IL/AOT warnings.
+247 xUnit tests and 121 end-to-end checks (`tests/e2e/control_test.py` drives a published binary with a Python
+stdio echo server as bridge, `tests/e2e/http_test.py` with a Python Streamable HTTP server, `tests/e2e/cli_test.py`
+runs the commands against real hubs). Both projects publish with `TreatWarningsAsErrors` and zero IL/AOT warnings.
 
 ## Layout
 
@@ -268,7 +310,7 @@ brand/               icon, mark, wordmark
 ## Status
 
 CI runs the unit tests, the warning-free Native AOT publish and the e2e suites on macOS, Ubuntu and Windows (the
-control-socket suite skips Windows, where CPython has no AF_UNIX). The desktop app is used on macOS only:
+control-socket and command suites skip Windows, where CPython has no AF_UNIX and the commands are not tested). The desktop app is used on macOS only:
 on Windows the hub cannot tell which program is on the other end of the control socket, so without `--control-trust-all`
 it accepts no approval and Safe mode can block but not ask.
 Version 1.4.1. MIT license.

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+**Command line**
+
+- The hub binary answers commands: `status` (every running hub with its client, mode, context cost, blocked calls,
+  failed bridges, sign-ins and waiting approvals), `tools`, `watch` (calls and approval requests as they happen),
+  `mode`, `approve`, `deny`, and `bridge list|add|remove` for `config.json`.
+- `mode`, `approve` and `deny` are accepted only by a hub started with `--control-trust-all`; the default is unchanged,
+  only the desktop app may change what a hub does.
+
 ## 1.4.1
 
 **Desktop app**
