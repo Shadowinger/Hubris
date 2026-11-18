@@ -35,11 +35,15 @@ jobs:
           [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME does not match Directory.Build.props ($version)"; exit 1; }
           echo "VERSION=$version" >> "$GITHUB_ENV"
 
-      - name: Package for macOS (the app with the hub inside)
+      - name: Package for macOS (the app with the hub inside, and the hub alone)
         if: runner.os == 'macOS'
         run: |
           build/bundle-macos.sh
           ditto -c -k --keepParent artifacts/Hubris.app "Hubris-$VERSION-${{ matrix.name }}.zip"
+          # the hub alone, for install.sh and for people who want no desktop app
+          out=$(dirname "$(find src/Hubris/bin/Release -type f -name Hubris -path '*publish*' | head -1)")
+          mkdir pkg && cp "$out/Hubris" "$out"/*.dylib LICENSE README.md pkg/
+          tar -czf "Hubris-$VERSION-${{ matrix.name }}-cli.tar.gz" -C pkg .
 
       - name: Package for Linux (the hub)
         if: runner.os == 'Linux'

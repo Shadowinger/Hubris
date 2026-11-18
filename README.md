@@ -124,15 +124,22 @@ client ──stdio──▶ Hubris ──stdio──▶ bridge 1 (npx …)
 
 ### Download
 
-Each [release](https://github.com/Shadowinger/Hubris/releases) carries three archives and `SHA256SUMS`:
+There are two ways to get it: the command line alone, or the desktop app with the hub inside.
 
-| File | What is in it |
-|---|---|
-| `Hubris-<version>-macos-arm64.zip` | `Hubris.app` for Apple Silicon: the desktop app with the hub inside |
-| `Hubris-<version>-linux-x64.tar.gz` | the hub |
-| `Hubris-<version>-windows-x64.zip` | the hub |
+**Command line** (macOS on Apple Silicon, Linux x64). One line installs the hub for your user:
 
-**macOS.** Unzip, move `Hubris.app` to `/Applications`, then clear the download mark. The app is not signed with an
+```bash
+curl -fsSL https://raw.githubusercontent.com/Shadowinger/Hubris/main/install.sh | sh
+```
+
+[install.sh](install.sh) takes the latest release, checks the archive against `SHA256SUMS`, unpacks it into
+`~/.hubris/bin` and puts a `hubris` launcher into `~/.local/bin`. Running it again updates, `HUBRIS_VERSION=1.5.0`
+in front of `sh` picks a version, and `rm -rf ~/.hubris/bin ~/.local/bin/hubris` removes it. On macOS there is
+nothing to unblock, a file fetched by curl carries no download mark. This install has no desktop app; what the
+[commands](#command-line) can do without one is described there. The macOS archive for it is in releases from 1.5.0 on.
+
+**Desktop app** (macOS on Apple Silicon). Download `Hubris-<version>-macos-arm64.zip` from the
+[releases](https://github.com/Shadowinger/Hubris/releases), unzip, move `Hubris.app` to `/Applications`, then clear the download mark. The app is not signed with an
 Apple developer certificate, so without this step macOS refuses to open it:
 
 ```bash
@@ -143,10 +150,18 @@ Open the app, go to the configurator, press Scan and then Import & hijack for ea
 The hub itself is `/Applications/Hubris.app/Contents/MacOS/Hubris`. Keep the app and the hub in that one folder: the
 hub takes approvals only from the desktop app next to it.
 
-**Linux and Windows.** Unpack the archive anywhere and register the hub with a client as shown below. There is no
-desktop app in these archives, and on Windows the hub cannot take approvals (see [Status](#status)).
+**Windows.** Unpack `Hubris-<version>-windows-x64.zip` anywhere and register the hub with a client as shown below.
+There is no desktop app for Windows, and the hub cannot take approvals there (see [Status](#status)).
 
-To check a download: `shasum -a 256 -c SHA256SUMS` in the folder with the files.
+Each release carries these files:
+
+| File | What is in it |
+|---|---|
+| `Hubris-<version>-macos-arm64.zip` | `Hubris.app`: the desktop app with the hub inside |
+| `Hubris-<version>-macos-arm64-cli.tar.gz` | the hub alone, what `install.sh` fetches on macOS |
+| `Hubris-<version>-linux-x64.tar.gz` | the hub, what `install.sh` fetches on Linux |
+| `Hubris-<version>-windows-x64.zip` | the hub |
+| `SHA256SUMS` | to check a download by hand: `shasum -a 256 -c SHA256SUMS` in the folder with the files |
 
 ### Build from source
 
@@ -265,7 +280,8 @@ opens; a `watch` that is running then counts as somebody who can approve, so blo
 added here applies from the next hub start. An OAuth sign-in is started from the desktop app, and `bridge add`
 writes no `auth` block: add a server that needs one in the app or in the file.
 
-On macOS the binary is inside the app: `alias hubris=/Applications/Hubris.app/Contents/MacOS/Hubris`.
+With the desktop app the binary is inside it: `alias hubris=/Applications/Hubris.app/Contents/MacOS/Hubris`;
+`install.sh` sets up `hubris` on its own.
 
 ## Desktop app
 
@@ -293,7 +309,7 @@ dotnet test tests/Hubris.Tests      # unit tests only
 
 247 xUnit tests and 121 end-to-end checks (`tests/e2e/control_test.py` drives a published binary with a Python
 stdio echo server as bridge, `tests/e2e/http_test.py` with a Python Streamable HTTP server, `tests/e2e/cli_test.py`
-runs the commands against real hubs). Both projects publish with `TreatWarningsAsErrors` and zero IL/AOT warnings.
+runs the commands against real hubs); `tests/e2e/install_test.sh` installs a packed build with `install.sh`. Both projects publish with `TreatWarningsAsErrors` and zero IL/AOT warnings.
 
 ## Layout
 

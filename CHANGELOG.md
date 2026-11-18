@@ -10,6 +10,12 @@
 - `mode`, `approve` and `deny` are accepted only by a hub started with `--control-trust-all`; the default is unchanged,
   only the desktop app may change what a hub does.
 
+**Install**
+
+- `install.sh` installs the hub alone with one line (macOS on Apple Silicon, Linux x64): latest release, checked
+  against `SHA256SUMS`, into `~/.hubris/bin` with a `hubris` launcher in `~/.local/bin`.
+- Releases carry a new archive for it, `Hubris-<version>-macos-arm64-cli.tar.gz`; the desktop app archive is unchanged.
+
 ## 1.4.1
 
 **Desktop app**
