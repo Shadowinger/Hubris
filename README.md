@@ -28,7 +28,7 @@ Measured on an M-series Mac with the 4 bridges from my own `~/.hubris/config.jso
 | context used after unlocking the tools a task needs | all 52 | 13 of 52, ~1 800 tokens (81 % less, from `hub_status` on a real session) |
 | time until `tools/list` is answered | ~1.8 s (every bridge spawned via `npx`) | 72 ms (definitions served from the SQLite cache, bridges spawned on first call) |
 | MCP server processes after start | 4 (one per server) | 0 (bridges start lazily; 1 of 4 running after a typical session) |
-| server binary | | 9.5 MB, starts in ~50 ms, ~13 MB RSS in steady state |
+| server binary | | 9.4 MB, starts in ~50 ms, ~13 MB RSS in steady state |
 
 The token numbers are bytes/4 estimates. The second row comes from a live session where the model
 searched for and unlocked 10 bridged tools; the rest stayed off the list.
