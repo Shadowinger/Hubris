@@ -262,7 +262,7 @@ Hubris bridge remove <name>
 
 ```
 $ Hubris status
-hub 71054 · Claude Code 2.1.325 · Safe mode · up 7 h 1 min · Hubris 1.4.1
+hub 71054 · Claude Code 2.1.325 · Safe mode · up 7 h 1 min · Hubris 1.5.0
   folder    /Users/me/project
   context   11 of 368 tools listed, 5,043 of 180,691 tokens
   policy    1 blocked, 3 masked
@@ -329,4 +329,4 @@ CI runs the unit tests, the warning-free Native AOT publish and the e2e suites o
 control-socket and command suites skip Windows, where CPython has no AF_UNIX and the commands are not tested). The desktop app is used on macOS only:
 on Windows the hub cannot tell which program is on the other end of the control socket, so without `--control-trust-all`
 it accepts no approval and Safe mode can block but not ask.
-Version 1.4.1. MIT license.
+Version 1.5.0. MIT license.
